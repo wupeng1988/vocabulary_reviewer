@@ -1,0 +1,613 @@
+<template>
+  <div>
+    <!-- 未开始复习：欢迎界面 -->
+    <div v-if="!reviewing" style="text-align: center; padding-top: 60px">
+      <el-card style="max-width: 600px; margin: 0 auto">
+        <div style="font-size: 48px; margin-bottom: 20px">🔄</div>
+        <h2 style="margin-bottom: 20px">智能复习中心</h2>
+        <p style="color: #909399; margin-bottom: 30px">
+          系统将根据你的复习记录智能选词，每批 <strong>{{ config.batchSize }}</strong> 个单词
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 12px; align-items: center">
+          <el-button type="primary" size="large" @click="startReview('both')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
+            🔄 完整复习（认读+默写）
+          </el-button>
+          <el-button type="warning" size="large" @click="startReview('recog')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
+            📖 仅认读复习
+          </el-button>
+          <el-button type="success" size="large" @click="startReview('spell')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
+            ✍️ 仅默写复习
+          </el-button>
+        </div>
+        <div style="margin-top: 20px">
+          <el-button link @click="showConfigDialog = true">
+            ⚙️ 复习设置
+          </el-button>
+        </div>
+      </el-card>
+    </div>
+
+    <!-- 复习进行中 -->
+    <div v-else>
+      <!-- 顶部进度栏 -->
+      <el-card style="margin-bottom: 20px">
+        <el-row align="middle" :gutter="20">
+          <el-col :span="6">
+            <el-tag :type="phase === 'recog' ? 'primary' : 'success'" size="large">
+              {{ phaseLabel }}
+            </el-tag>
+          </el-col>
+          <el-col :span="14">
+            <el-progress
+              :percentage="progressPercent"
+              :format="() => progressText"
+              :stroke-width="20"
+              :color="phase === 'recog' ? '#409EFF' : '#67C23A'"
+            />
+          </el-col>
+          <el-col :span="4" style="text-align: right">
+            <el-button size="small" @click="quitReview">退出</el-button>
+          </el-col>
+        </el-row>
+      </el-card>
+
+      <!-- 卡片区 -->
+      <el-card style="min-height: 400px; display: flex; align-items: center; justify-content: center">
+        <div style="text-align: center; width: 100%; max-width: 700px" tabindex="0" ref="cardAreaRef">
+
+          <!-- 认读模式 -->
+          <template v-if="phase === 'recog'">
+            <div :class="['recog-card', recogFlashClass]">
+              <div style="font-size: 42px; font-weight: bold; margin-bottom: 10px">
+                {{ currentWord.word }}
+              </div>
+              <div style="font-size: 20px; color: #909399; margin-bottom: 30px">
+                {{ currentWord.phonetic || '' }}
+              </div>
+
+              <!-- 点击认识/不认识后显示含义和例句，不自动隐藏 -->
+              <transition name="fade">
+                <div v-if="recogAnswered" style="margin-bottom: 30px; padding: 20px; background: #f5f7fa; border-radius: 8px">
+                  <div style="font-size: 22px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
+                  <div style="font-size: 18px; color: #606266">{{ currentWord.exampleSentence }}</div>
+                  <div style="font-size: 18px; color: #909399; margin-top: 4px">{{ currentWord.exampleMeaning }}</div>
+                </div>
+              </transition>
+
+              <!-- 未回答：认识/不认识 按钮 -->
+              <div v-if="!recogAnswered" style="margin-top: 40px">
+                <el-button
+                  type="danger"
+                  size="large"
+                  style="font-size: 18px; padding: 14px 36px; margin-right: 30px"
+                  @click="recogAnswer(false)"
+                >
+                  不认识
+                </el-button>
+                <el-button
+                  type="success"
+                  size="large"
+                  style="font-size: 18px; padding: 14px 36px"
+                  @click="recogAnswer(true)"
+                >
+                  认识
+                </el-button>
+              </div>
+              <!-- 已回答：下一词按钮 -->
+              <div v-else style="margin-top: 20px">
+                <el-button type="primary" size="large" @click="recogNext">下一词 →</el-button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 默写模式 -->
+          <template v-if="phase === 'spell'">
+            <div style="margin-bottom: 30px">
+              <div style="font-size: 24px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
+              <div style="font-size: 18px; color: #606266">{{ currentWord.exampleSentence }}</div>
+              <div style="font-size: 18px; color: #909399; margin-top: 4px">{{ currentWord.exampleMeaning }}</div>
+            </div>
+
+            <div style="margin-top: 30px">
+              <el-input
+                ref="spellInputRef"
+                v-model="spellInput"
+                :class="{ 'spell-wrong': spellShowWrong }"
+                size="large"
+                placeholder="请输入英文单词..."
+                style="font-size: 20px; max-width: 400px"
+                @keyup.enter="checkSpelling"
+                @keydown.delete="onSpellDelete"
+              />
+            </div>
+
+            <!-- 拼写结果反馈：不自动消失，用户按删除键时清空 -->
+            <transition name="fade">
+              <div v-if="spellFeedback" style="margin-top: 20px">
+                <el-tag v-if="spellFeedback === 'correct'" type="success" size="large" style="font-size: 16px">
+                  ✅ 正确！
+                </el-tag>
+                <div v-if="spellFeedback === 'wrong'">
+                  <el-tag type="danger" size="large" style="font-size: 16px; margin-bottom: 10px">
+                    ❌ 错误，请重新输入
+                  </el-tag>
+                  <div style="font-size: 20px; color: #E6A23C; margin-top: 10px">
+                    正确答案：<strong>{{ currentWord.word }}</strong>
+                  </div>
+                </div>
+              </div>
+            </transition>
+
+            <div style="margin-top: 30px">
+              <el-button
+                type="primary"
+                size="large"
+                style="font-size: 18px; padding: 12px 30px"
+                @click="checkSpelling"
+              >
+                确认拼写
+              </el-button>
+            </div>
+          </template>
+
+        </div>
+      </el-card>
+    </div>
+
+    <!-- 复习结果弹窗 -->
+    <el-dialog v-model="showResult" title="🎉 本次复习完成" width="500px" :close-on-click-modal="false">
+      <div style="text-align: center; padding: 20px">
+        <el-row :gutter="30">
+          <el-col :span="12">
+            <el-statistic title="认读正确率" :value="recogAccuracy" suffix="%" />
+          </el-col>
+          <el-col :span="12">
+            <el-statistic title="默写正确率" :value="spellAccuracy" suffix="%" />
+          </el-col>
+        </el-row>
+        <div style="margin-top: 20px; color: #909399">
+          共复习 {{ totalWordCount }} 个单词<span v-if="reviewMode !== 'recog'">，默写循环 {{ spellRound }} 轮</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="resetReview">继续复习</el-button>
+        <el-button @click="showResult = false; reviewing = false">返回</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 设置弹窗 -->
+    <el-dialog v-model="showConfigDialog" title="⚙️ 复习设置" width="400px">
+      <el-form label-width="120px">
+        <el-form-item label="每批词数">
+          <el-input-number v-model="configForm.batchSize" :min="10" :max="200" :step="10" />
+        </el-form-item>
+        <el-form-item label="沉睡天数阈值">
+          <el-input-number v-model="configForm.maxDormantDays" :min="5" :max="60" />
+        </el-form-item>
+        <el-form-item label="紧急因子权重">
+          <el-slider v-model="configForm.emergencyWeight" :min="0.1" :max="0.9" :step="0.1" show-input />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showConfigDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveConfig">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import api from '../api'
+
+// ==================== 配置 ====================
+const config = ref({ batchSize: 50, maxDormantDays: 15, emergencyWeight: 0.7 })
+const configForm = ref({ batchSize: 50, maxDormantDays: 15, emergencyWeight: 0.7 })
+const showConfigDialog = ref(false)
+
+// ==================== 复习状态 ====================
+const reviewing = ref(false)
+const loading = ref(false)
+
+// 复习模式: 'both' | 'recog' | 'spell'
+const reviewMode = ref('both')
+
+// 原始词表（从后端获取，不变）
+const originalList = ref([])
+// 当前正在操作的词表（默写阶段会变成错词子集）
+const activeList = ref([])
+
+const currentIndex = ref(0)
+// phase: 'recog' | 'spell'
+const phase = ref('recog')
+
+// 认读阶段
+const recogAnswered = ref(false)
+const recogFlashClass = ref('')
+
+// 默写阶段
+const spellInput = ref('')
+const spellFeedback = ref('') // '' | 'correct' | 'wrong'
+const spellShowWrong = ref(false)
+const spellInputRef = ref(null)
+
+// 卡片区域 ref（用于键盘监听聚焦）
+const cardAreaRef = ref(null)
+
+// 记录每个词的默写结果（首次是否一次写对）: wordId -> boolean
+const spellFirstResult = ref({})
+
+// 追踪每轮默写中写错的词ID
+const spellWrongInRound = ref([])
+
+// 统计
+const recogCorrectCount = ref(0)
+const recogWrongCount = ref(0)
+const spellRound = ref(1) // 默写轮次
+
+const showResult = ref(false)
+
+// ==================== 计算属性 ====================
+const currentWord = computed(() => activeList.value[currentIndex.value] || {})
+
+const totalWordCount = computed(() => originalList.value.length)
+
+const phaseLabel = computed(() => {
+  if (phase.value === 'recog') return '📖 认读模式'
+  if (spellRound.value === 1) return '✍️ 默写模式'
+  return `✍️ 默写第 ${spellRound.value} 轮`
+})
+
+const progressPercent = computed(() => {
+  const total = activeList.value.length
+  if (total === 0) return 0
+  return Math.round((currentIndex.value + 1) / total * 100)
+})
+
+const progressText = computed(() => `${currentIndex.value + 1} / ${activeList.value.length}`)
+
+const recogAccuracy = computed(() => {
+  const total = recogCorrectCount.value + recogWrongCount.value
+  return total > 0 ? Math.round(recogCorrectCount.value / total * 10000) / 100 : 0
+})
+
+const spellAccuracy = computed(() => {
+  const results = Object.values(spellFirstResult.value)
+  const total = results.length
+  const correct = results.filter(r => r).length
+  return total > 0 ? Math.round(correct / total * 10000) / 100 : 0
+})
+
+// ==================== 键盘事件 ====================
+const handleKeydown = (e) => {
+  if (!reviewing.value) return
+  // 默写模式下输入框有焦点时不拦截
+  if (phase.value === 'spell') return
+
+  if (phase.value === 'recog') {
+    if (e.key === 'ArrowLeft') {
+      // 上一个词
+      e.preventDefault()
+      recogPrev()
+    } else if (e.key === 'ArrowRight') {
+      // 下一个词（如果已回答则跳下一个，否则无操作）
+      e.preventDefault()
+      if (recogAnswered.value) {
+        recogNext()
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (!recogAnswered.value) {
+        // 未回答时，回车 = 点击"认识"
+        recogAnswer(true)
+      } else {
+        // 已回答时，回车 = 下一词
+        recogNext()
+      }
+    }
+  }
+}
+
+// ==================== 方法 ====================
+
+const loadConfig = async () => {
+  try {
+    const res = await api.get('/review/config')
+    config.value = res
+    configForm.value = { ...res }
+  } catch (e) {
+    console.error('加载配置失败', e)
+  }
+}
+
+const saveConfig = async () => {
+  try {
+    const res = await api.put('/review/config', configForm.value)
+    config.value = res
+    showConfigDialog.value = false
+    ElMessage.success('设置已保存')
+  } catch (e) {
+    ElMessage.error('保存设置失败')
+  }
+}
+
+// 开始复习，mode: 'both' | 'recog' | 'spell'
+const startReview = async (mode) => {
+  loading.value = true
+  try {
+    const res = await api.get('/review/generate')
+    if (!res || res.length === 0) {
+      ElMessage.info('暂无需要复习的单词，请先导入词库')
+      loading.value = false
+      return
+    }
+    originalList.value = res
+    activeList.value = [...res]
+    currentIndex.value = 0
+    reviewMode.value = mode
+
+    // 根据模式设置初始阶段
+    if (mode === 'spell') {
+      phase.value = 'spell'
+    } else {
+      phase.value = 'recog'
+    }
+
+    recogAnswered.value = false
+    recogFlashClass.value = ''
+    spellInput.value = ''
+    spellFeedback.value = ''
+    spellShowWrong.value = false
+    spellFirstResult.value = {}
+    spellWrongInRound.value = []
+    recogCorrectCount.value = 0
+    recogWrongCount.value = 0
+    spellRound.value = 1
+    reviewing.value = true
+
+    // 默写模式自动聚焦输入框
+    if (mode === 'spell') {
+      nextTick(() => {
+        spellInputRef.value?.focus()
+      })
+    }
+  } catch (e) {
+    ElMessage.error('生成复习列表失败')
+  }
+  loading.value = false
+}
+
+// ==================== 认读阶段 ====================
+
+const recogAnswer = async (known) => {
+  recogAnswered.value = true
+
+  // 闪烁效果
+  recogFlashClass.value = known ? 'flash-green' : 'flash-red'
+  setTimeout(() => { recogFlashClass.value = '' }, 600)
+
+  // 统计
+  if (known) recogCorrectCount.value++
+  else recogWrongCount.value++
+
+  // 上报后端
+  try {
+    await api.post('/review/record', {
+      wordId: currentWord.value.id,
+      mode: 'RECOG',
+      result: known
+    })
+  } catch (e) {
+    console.error('记录认读结果失败', e)
+  }
+}
+
+// 认读阶段：下一个词
+const recogNext = () => {
+  if (currentIndex.value < activeList.value.length - 1) {
+    currentIndex.value++
+    recogAnswered.value = false
+    recogFlashClass.value = ''
+  } else {
+    // 认读全部完成
+    if (reviewMode.value === 'recog') {
+      // 仅认读模式，直接结束
+      showResult.value = true
+    } else {
+      // 完整模式，进入默写阶段
+      enterSpellPhase()
+    }
+  }
+}
+
+// 认读阶段：上一个词
+const recogPrev = () => {
+  if (currentIndex.value > 0) {
+    currentIndex.value--
+    recogAnswered.value = false
+    recogFlashClass.value = ''
+  }
+}
+
+// ==================== 默写阶段 ====================
+
+const enterSpellPhase = () => {
+  phase.value = 'spell'
+  currentIndex.value = 0
+  spellInput.value = ''
+  spellFeedback.value = ''
+  spellShowWrong.value = false
+  nextTick(() => {
+    spellInputRef.value?.focus()
+  })
+}
+
+// 默写输入框按删除键：如果当前显示着错误反馈，清空输入内容并隐藏正确答案
+const onSpellDelete = (e) => {
+  if (spellFeedback.value === 'wrong') {
+    // 阻止默认删除行为，直接清空整个输入框并隐藏反馈
+    e.preventDefault()
+    spellInput.value = ''
+    spellFeedback.value = ''
+    spellShowWrong.value = false
+  }
+}
+
+const checkSpelling = async () => {
+  if (!spellInput.value.trim()) {
+    ElMessage.warning('请输入单词')
+    return
+  }
+
+  const input = spellInput.value.trim().toLowerCase()
+  const correct = currentWord.value.word.trim().toLowerCase()
+  const isCorrect = input === correct
+
+  // 上报后端
+  try {
+    await api.post('/review/record', {
+      wordId: currentWord.value.id,
+      mode: 'SPELL',
+      result: isCorrect
+    })
+  } catch (e) {
+    console.error('记录默写结果失败', e)
+  }
+
+  if (isCorrect) {
+    spellFeedback.value = 'correct'
+    spellShowWrong.value = false
+    if (spellRound.value === 1) {
+      spellFirstResult.value[currentWord.value.id] = true
+    }
+    // 正确后 0.8 秒自动跳下一个
+    setTimeout(() => {
+      spellNext()
+    }, 800)
+  } else {
+    // 错误：显示正确答案（不自动消失），清空输入框让用户重新输入
+    spellFeedback.value = 'wrong'
+    spellShowWrong.value = true
+    if (spellRound.value === 1) {
+      spellFirstResult.value[currentWord.value.id] = false
+    }
+    // 记录本轮错词
+    if (!spellWrongInRound.value.includes(currentWord.value.id)) {
+      spellWrongInRound.value.push(currentWord.value.id)
+    }
+    // 不清空输入框，保留用户输入内容供对比；用户按删除键时再清空
+    nextTick(() => {
+      spellInputRef.value?.focus()
+    })
+  }
+}
+
+// 默写阶段：正确后跳下一个
+const spellNext = () => {
+  if (currentIndex.value < activeList.value.length - 1) {
+    currentIndex.value++
+    spellInput.value = ''
+    spellFeedback.value = ''
+    spellShowWrong.value = false
+    nextTick(() => {
+      spellInputRef.value?.focus()
+    })
+  } else {
+    // 本轮默写完成，检查是否有错词需要重默
+    startNextSpellRound()
+  }
+}
+
+// 本轮默写结束，筛选错词进入下一轮
+const startNextSpellRound = () => {
+  const wrongWords = spellWrongInRound.value
+  if (wrongWords.length === 0) {
+    // 全部正确，复习完成
+    showResult.value = true
+    return
+  }
+
+  // 有错词，进入下一轮
+  spellRound.value++
+  activeList.value = wrongWords.map(id => originalList.value.find(w => w.id === id)).filter(Boolean)
+  currentIndex.value = 0
+  spellInput.value = ''
+  spellFeedback.value = ''
+  spellShowWrong.value = false
+  spellWrongInRound.value = []
+
+  ElMessage.info(`还有 ${activeList.value.length} 个单词需要重默，开始第 ${spellRound.value} 轮`)
+  nextTick(() => {
+    spellInputRef.value?.focus()
+  })
+}
+
+// 退出复习
+const quitReview = async () => {
+  try {
+    await ElMessageBox.confirm('确定退出本次复习？已记录的结果不会丢失。', '提示', {
+      confirmButtonText: '确定退出',
+      cancelButtonText: '继续复习',
+      type: 'warning'
+    })
+    reviewing.value = false
+  } catch {
+    // 用户取消
+  }
+}
+
+const resetReview = () => {
+  showResult.value = false
+  reviewing.value = false
+  startReview(reviewMode.value)
+}
+
+onMounted(() => {
+  loadConfig()
+  document.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
+</script>
+
+<style scoped>
+.recog-card {
+  transition: background-color 0.3s;
+  padding: 20px;
+  border-radius: 12px;
+}
+
+.flash-green {
+  background-color: #f0f9eb !important;
+  animation: flashGreen 0.6s;
+}
+
+.flash-red {
+  background-color: #fef0f0 !important;
+  animation: flashRed 0.6s;
+}
+
+@keyframes flashGreen {
+  0% { background-color: #67C23A; }
+  100% { background-color: #f0f9eb; }
+}
+
+@keyframes flashRed {
+  0% { background-color: #F56C6C; }
+  100% { background-color: #fef0f0; }
+}
+
+.spell-wrong :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #F56C6C inset !important;
+}
+
+.fade-enter-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from {
+  opacity: 0;
+}
+</style>
