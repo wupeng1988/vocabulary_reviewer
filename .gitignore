@@ -1,0 +1,38 @@
+# ==================== 后端 ====================
+backend/target/
+review-backend/target/
+*.class
+*.jar
+*.war
+*.log
+
+# H2 数据库文件
+worddb.mv.db
+worddb.trace.db
+worddb.lock.db
+
+# Maven
+*.flattened-pom.xml
+
+# ==================== 前端 ====================
+frontend/node_modules/
+frontend/dist/
+review-frontend/node_modules/
+review-frontend/dist/
+
+# ==================== IDE ====================
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+
+# ==================== 系统文件 ====================
+.DS_Store
+Thumbs.db
+
+# ==================== 项目运行时 ====================
+.pids/
