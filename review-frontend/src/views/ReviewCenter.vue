@@ -104,8 +104,7 @@
           <template v-if="phase === 'spell'">
             <div style="margin-bottom: 30px">
               <div style="font-size: 24px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
-              <div style="font-size: 18px; color: #606266">{{ currentWord.exampleSentence }}</div>
-              <div style="font-size: 18px; color: #909399; margin-top: 4px">{{ currentWord.exampleMeaning }}</div>
+              <div style="font-size: 18px; color: #909399">{{ currentWord.exampleMeaning }}</div>
             </div>
 
             <div style="margin-top: 30px">
