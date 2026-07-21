@@ -1,33 +1,7 @@
 <template>
   <div>
-    <!-- 顶部：上传 Excel -->
-    <el-card style="margin-bottom: 20px">
-      <template #header>
-        <span style="font-size: 16px; font-weight: bold">📚 导入词库</span>
-      </template>
-      <el-upload
-        ref="uploadRef"
-        action="/api/words/import"
-        name="file"
-        :limit="1"
-        :on-success="handleUploadSuccess"
-        :on-error="handleUploadError"
-        :before-upload="beforeUpload"
-        accept=".xls,.xlsx"
-        drag
-      >
-        <el-icon style="font-size: 40px; color: #409EFF"><upload-filled /></el-icon>
-        <div style="margin-top: 10px">将 Excel 文件拖到此处，或 <em>点击上传</em></div>
-        <template #tip>
-          <div style="color: #909399; font-size: 12px; margin-top: 8px">
-            仅支持 .xls / .xlsx 格式，A-E 列依次对应：生词、音标、含义、例句、例句释义
-          </div>
-        </template>
-      </el-upload>
-    </el-card>
-
-    <!-- 搜索栏 -->
-    <el-card style="margin-bottom: 20px">
+    <!-- 搜索栏 - sticky 固定顶部 -->
+    <el-card class="sticky-search">
       <el-row :gutter="20" align="middle">
         <el-col :span="8">
           <el-input
@@ -59,7 +33,7 @@
 
     <!-- 词库表格 -->
     <el-card>
-      <el-table :data="words" stripe border style="width: 100%" max-height="500">
+      <el-table :data="words" stripe border style="width: 100%">
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="word" label="生词" width="150" />
         <el-table-column prop="phonetic" label="音标" width="180" />
@@ -103,7 +77,7 @@
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :total="totalElements"
-          :page-sizes="[20, 50, 100]"
+          :page-sizes="[20, 50, 100, 200, 500, 1000]"
           layout="total, sizes, prev, pager, next, jumper"
           @size-change="loadWords"
           @current-change="loadWords"
@@ -115,7 +89,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { UploadFilled, Search } from '@element-plus/icons-vue'
+import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
 
@@ -124,7 +98,6 @@ const keyword = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const totalElements = ref(0)
-const uploadRef = ref(null)
 const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
 
@@ -154,31 +127,16 @@ const deleteWord = async (id) => {
   }
 }
 
-const beforeUpload = (file) => {
-  const name = file.name
-  if (!name.endsWith('.xls') && !name.endsWith('.xlsx')) {
-    ElMessage.error('仅支持 .xls 和 .xlsx 格式')
-    return false
-  }
-  return true
-}
-
-const handleUploadSuccess = (response) => {
-  if (response.success) {
-    ElMessage.success(response.message)
-    loadWords()
-  } else {
-    ElMessage.error(response.message)
-  }
-  uploadRef.value?.clearFiles()
-}
-
-const handleUploadError = () => {
-  ElMessage.error('上传失败，请检查文件格式')
-  uploadRef.value?.clearFiles()
-}
-
 onMounted(() => {
   loadWords()
 })
 </script>
+
+<style scoped>
+.sticky-search {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-bottom: 20px;
+}
+</style>

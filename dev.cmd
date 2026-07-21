@@ -6,7 +6,6 @@ setlocal enabledelayedexpansion
 :: 用法: dev.cmd start | stop | status
 
 set "PROJECT_DIR=%~dp0"
-:: 去掉末尾反斜杠
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 set "BACKEND_DIR=%PROJECT_DIR%\review-backend"
 set "FRONTEND_DIR=%PROJECT_DIR%\review-frontend"
@@ -22,7 +21,6 @@ if /i "%1"=="stop" goto :do_stop
 if /i "%1"=="status" goto :do_status
 goto :usage
 
-:: ==================== 启动 ====================
 :do_start
 echo ━━━ 启动 Word Review Pro ━━━
 call :start_backend
@@ -33,7 +31,6 @@ echo.
 echo 🌐 访问地址: http://localhost:%FRONTEND_PORT%
 goto :eof
 
-:: ==================== 停止 ====================
 :do_stop
 echo ━━━ 停止 Word Review Pro ━━━
 call :stop_frontend
@@ -42,116 +39,82 @@ echo.
 call :show_status
 goto :eof
 
-:: ==================== 状态 ====================
 :do_status
 call :show_status
 goto :eof
 
 :: ==================== 启动后端 ====================
 :start_backend
-netstat -ano | findstr ":%BACKEND_PORT% " | findstr "LISTENING" >nul 2>&1
-if %errorlevel%==0 (
-    echo ⚠️  后端已在运行 (端口 %BACKEND_PORT%)
-    goto :eof
-)
-echo 🚀 启动后端 (Spring Boot)...
+echo 🚀 启动后端 (Spring Boot) 在新窗口中...
 cd /d "%BACKEND_DIR%"
-start /b mvn spring-boot:run > "%PID_DIR%\backend.log" 2>&1
-:: 记录 PID（通过端口查找）
-echo 等待后端启动...
-set "BACKEND_READY=0"
-for /l %%i in (1,1,30) do (
-    if !BACKEND_READY!==0 (
-        timeout /t 2 /nobreak >nul 2>&1
-        curl -s http://localhost:%BACKEND_PORT%/api/review/config >nul 2>&1
-        if !errorlevel!==0 (
-            set "BACKEND_READY=1"
-            echo ✅ 后端启动成功 (http://localhost:%BACKEND_PORT%)
-        )
-    )
-)
-if %BACKEND_READY%==0 (
-    echo ❌ 后端启动超时，请检查日志: %PID_DIR%\backend.log
-)
+start "Backend" cmd /k mvn spring-boot:run
+echo ✅ 后端启动命令已发出（请观察新窗口）
 cd /d "%PROJECT_DIR%"
 goto :eof
 
 :: ==================== 启动前端 ====================
 :start_frontend
-netstat -ano | findstr ":%FRONTEND_PORT% " | findstr "LISTENING" >nul 2>&1
-if %errorlevel%==0 (
-    echo ⚠️  前端已在运行 (端口 %FRONTEND_PORT%)
-    goto :eof
-)
-echo 🚀 启动前端 (Vue + Vite)...
+echo 🚀 启动前端 (Vue + Vite) 在新窗口中...
 cd /d "%FRONTEND_DIR%"
-start /b npx vite --host > "%PID_DIR%\frontend.log" 2>&1
-echo 等待前端启动...
-set "FRONTEND_READY=0"
-for /l %%i in (1,1,15) do (
-    if !FRONTEND_READY!==0 (
-        timeout /t 1 /nobreak >nul 2>&1
-        curl -s http://localhost:%FRONTEND_PORT% >nul 2>&1
-        if !errorlevel!==0 (
-            set "FRONTEND_READY=1"
-            echo ✅ 前端启动成功 (http://localhost:%FRONTEND_PORT%)
-        )
-    )
-)
-if %FRONTEND_READY%==0 (
-    echo ❌ 前端启动超时，请检查日志: %PID_DIR%\frontend.log
-)
+start "Frontend" cmd /k npx vite --host
+echo ✅ 前端启动命令已发出（请观察新窗口）
 cd /d "%PROJECT_DIR%"
 goto :eof
 
 :: ==================== 停止后端 ====================
 :stop_backend
-set "FOUND_PID="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%BACKEND_PORT% " ^| findstr "LISTENING"') do (
-    set "FOUND_PID=%%p"
-)
-if defined FOUND_PID (
-    echo 🛑 停止后端 (PID: %FOUND_PID%)...
-    taskkill /pid %FOUND_PID% /t /f >nul 2>&1
-    echo ✅ 后端已停止
-) else (
-    echo ℹ️  后端未在运行
-)
+call :is_port_in_use %BACKEND_PORT% backend_pid
+if "!backend_pid!"=="" goto :backend_not_running
+echo 🛑 停止后端 (PID: !backend_pid!)...
+taskkill /pid !backend_pid! /t /f >nul 2>&1
+echo ✅ 后端已停止
+goto :eof
+:backend_not_running
+echo ℹ️  后端未在运行
 goto :eof
 
 :: ==================== 停止前端 ====================
 :stop_frontend
-set "FOUND_PID="
-for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":%FRONTEND_PORT% " ^| findstr "LISTENING"') do (
-    set "FOUND_PID=%%p"
-)
-if defined FOUND_PID (
-    echo 🛑 停止前端 (PID: %FOUND_PID%)...
-    taskkill /pid %FOUND_PID% /t /f >nul 2>&1
-    echo ✅ 前端已停止
-) else (
-    echo ℹ️  前端未在运行
-)
+call :is_port_in_use %FRONTEND_PORT% frontend_pid
+if "!frontend_pid!"=="" goto :frontend_not_running
+echo 🛑 停止前端 (PID: !frontend_pid!)...
+taskkill /pid !frontend_pid! /t /f >nul 2>&1
+echo ✅ 前端已停止
+goto :eof
+:frontend_not_running
+echo ℹ️  前端未在运行
 goto :eof
 
 :: ==================== 显示状态 ====================
 :show_status
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ---------------------------
 echo   Word Review Pro 运行状态
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-netstat -ano | findstr ":%BACKEND_PORT% " | findstr "LISTENING" >nul 2>&1
-if %errorlevel%==0 (
+echo ---------------------------
+call :is_port_in_use %BACKEND_PORT% backend_pid
+if not "!backend_pid!"=="" (
     echo   后端: ✅ 运行中 (http://localhost:%BACKEND_PORT%)
 ) else (
     echo   后端: ❌ 未运行
 )
-netstat -ano | findstr ":%FRONTEND_PORT% " | findstr "LISTENING" >nul 2>&1
-if %errorlevel%==0 (
+call :is_port_in_use %FRONTEND_PORT% frontend_pid
+if not "!frontend_pid!"=="" (
     echo   前端: ✅ 运行中 (http://localhost:%FRONTEND_PORT%)
 ) else (
     echo   前端: ❌ 未运行
 )
-echo ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+echo ---------------------------
+goto :eof
+
+:: ==================== 通用端口检测函数（无管道） ====================
+:is_port_in_use
+set "port=%~1"
+set "pid_var=%~2"
+set "%pid_var%="
+set "tmpfile=%TEMP%\netstat_%port%.txt"
+netstat -ano > "%tmpfile%"
+findstr /r ":%port% " "%tmpfile%" | findstr "LISTENING" > "%TEMP%\pid_%port%.txt"
+for /f "tokens=5" %%p in ('type "%TEMP%\pid_%port%.txt"') do set "%pid_var%=%%p"
+del "%tmpfile%" "%TEMP%\pid_%port%.txt" 2>nul
 goto :eof
 
 :: ==================== 用法 ====================

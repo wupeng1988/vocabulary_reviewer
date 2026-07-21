@@ -15,6 +15,9 @@
         <el-menu-item index="/words">
           <span>📚 词库管理</span>
         </el-menu-item>
+        <el-menu-item index="/data">
+          <span>🔧 数据管理</span>
+        </el-menu-item>
         <el-menu-item index="/review">
           <span>🔄 复习中心</span>
         </el-menu-item>
@@ -25,7 +28,7 @@
     </el-aside>
 
     <!-- 右侧内容 -->
-    <el-main style="background-color: #f0f2f5; padding: 20px">
+    <el-main class="main-scroll">
       <router-view />
     </el-main>
   </el-container>
@@ -48,5 +51,11 @@ const currentRoute = computed(() => route.path)
 }
 .el-menu-item span {
   margin-left: 8px;
+}
+.main-scroll {
+  background-color: #f0f2f5;
+  padding: 20px;
+  padding-top: 0px;
+  overflow-y: auto;
 }
 </style>

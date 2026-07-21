@@ -20,4 +20,13 @@ api.interceptors.response.use(response => {
   return Promise.reject(error)
 })
 
+/**
+ * 导出全部数据为 JSON 文件（需要 blob 响应，绕过响应拦截器）
+ */
+export function exportData() {
+  return axios.get('/api/words/export', {
+    responseType: 'blob'
+  })
+}
+
 export default api
