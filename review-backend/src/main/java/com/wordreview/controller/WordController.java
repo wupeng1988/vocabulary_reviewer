@@ -86,6 +86,7 @@ public class WordController {
             item.setSpellCorrect(w.getSpellCorrect());
             item.setSpellWrong(w.getSpellWrong());
             item.setIsDormant(w.getIsDormant());
+            item.setRecogOnly(w.getRecogOnly());
             return item;
         }).collect(Collectors.toList()));
         response.setTotalElements(wordPage.getTotalElements());
@@ -151,5 +152,29 @@ public class WordController {
             result.put("message", "单词不存在");
             return ResponseEntity.notFound().build();
         }
+    }
+
+    /** 更新单词的仅认读标记 */
+    @PutMapping("/{id}/recog-only")
+    public ResponseEntity<Map<String, Object>> updateRecogOnly(
+            @PathVariable Long id, @RequestBody Map<String, Boolean> body) {
+        Map<String, Object> result = new HashMap<>();
+        Boolean recogOnly = body.get("recogOnly");
+        if (recogOnly == null) {
+            result.put("success", false);
+            result.put("message", "缺少 recogOnly 参数");
+            return ResponseEntity.badRequest().body(result);
+        }
+        return wordRepository.findById(id).map(word -> {
+            word.setRecogOnly(recogOnly);
+            wordRepository.save(word);
+            result.put("success", true);
+            result.put("recogOnly", recogOnly);
+            return ResponseEntity.ok(result);
+        }).orElseGet(() -> {
+            result.put("success", false);
+            result.put("message", "单词不存在");
+            return ResponseEntity.notFound().build();
+        });
     }
 }

@@ -25,5 +25,6 @@ public class WordPageResponse {
         private Integer spellCorrect;
         private Integer spellWrong;
         private Boolean isDormant;
+        private Boolean recogOnly;
     }
 }

@@ -60,6 +60,15 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="仅认读" width="80" align="center">
+          <template #default="{ row }">
+            <el-switch
+              v-model="row.recogOnly"
+              size="small"
+              @change="toggleRecogOnly(row)"
+            />
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="80" align="center" fixed="right">
           <template #default="{ row }">
             <el-popconfirm title="确定删除该单词？" @confirm="deleteWord(row.id)">
@@ -124,6 +133,17 @@ const deleteWord = async (id) => {
     loadWords()
   } catch (e) {
     ElMessage.error('删除失败')
+  }
+}
+
+const toggleRecogOnly = async (row) => {
+  try {
+    await api.put(`/words/${row.id}/recog-only`, { recogOnly: row.recogOnly })
+    ElMessage.success(row.recogOnly ? '已设为仅认读' : '已取消仅认读')
+  } catch (e) {
+    // 回滚开关状态
+    row.recogOnly = !row.recogOnly
+    ElMessage.error('更新失败')
   }
 }
 

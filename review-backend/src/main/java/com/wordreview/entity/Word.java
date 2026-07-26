@@ -57,6 +57,10 @@ public class Word {
     @Column(nullable = false)
     private Boolean isDormant = false;      // 是否休眠
 
+    // 仅认读标记
+    @Column(nullable = false)
+    private Boolean recogOnly = false;      // 是否仅认读（不参与默写）
+
     /** 评分用临时字段，不持久化 */
     @Transient
     private Double priorityScore;

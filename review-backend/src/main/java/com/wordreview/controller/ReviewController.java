@@ -62,6 +62,7 @@ public class ReviewController {
             item.put("meaning", w.getMeaning());
             item.put("exampleSentence", w.getExampleSentence());
             item.put("exampleMeaning", w.getExampleMeaning());
+            item.put("recogOnly", w.getRecogOnly());
             return item;
         }).collect(Collectors.toList());
 

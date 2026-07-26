@@ -10,7 +10,7 @@
         </p>
         <div style="display: flex; flex-direction: column; gap: 12px; align-items: center">
           <el-button type="primary" size="large" @click="startReview('both')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
-            🔄 完整复习（认读+默写）
+            🔄 完整复习（认读+拼写+默写）
           </el-button>
           <el-button type="warning" size="large" @click="startReview('recog')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
             📖 仅认读复习
@@ -33,7 +33,7 @@
       <el-card style="margin-bottom: 20px">
         <el-row align="middle" :gutter="20">
           <el-col :span="6">
-            <el-tag :type="phase === 'recog' ? 'primary' : 'success'" size="large">
+            <el-tag :type="phaseTagType" size="large">
               {{ phaseLabel }}
             </el-tag>
           </el-col>
@@ -42,7 +42,7 @@
               :percentage="progressPercent"
               :format="() => progressText"
               :stroke-width="20"
-              :color="phase === 'recog' ? '#409EFF' : '#67C23A'"
+              :color="phaseProgressColor"
             />
           </el-col>
           <el-col :span="4" style="text-align: right">
@@ -74,8 +74,19 @@
                 </div>
               </transition>
 
+              <!-- 仅认读标记 -->
+              <div style="margin-bottom: 10px">
+                <el-switch
+                  v-model="currentWord.recogOnly"
+                  active-text="仅认读"
+                  inactive-text=""
+                  size="small"
+                  @change="toggleRecogOnly(currentWord)"
+                />
+              </div>
+
               <!-- 未回答：认识/不认识 按钮 -->
-              <div v-if="!recogAnswered" style="margin-top: 40px">
+              <div v-if="!recogAnswered" style="margin-top: 20px">
                 <el-button
                   type="danger"
                   size="large"
@@ -100,11 +111,86 @@
             </div>
           </template>
 
+          <!-- 拼写练习模式（显示生词、音标、意思、例句、例句意思，然后一个拼写框 -->
+          <template v-if="phase === 'practice'">
+            <div style="margin-bottom: 20px; padding: 20px; background: #f5f7fa; border-radius: 8px">
+              <div style="font-size: 36px; font-weight: bold; margin-bottom: 8px">
+                {{ currentWord.word }}
+              </div>
+              <div style="font-size: 18px; color: #909399; margin-bottom: 12px">
+                {{ currentWord.phonetic || '' }}
+              </div>
+              <div style="font-size: 22px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
+              <div style="font-size: 18px; color: #606266">{{ currentWord.exampleSentence }}</div>
+              <div style="font-size: 18px; color: #909399; margin-top: 4px">{{ currentWord.exampleMeaning }}</div>
+            </div>
+
+            <!-- 仅认读标记 -->
+            <div style="margin-bottom: 10px">
+              <el-switch
+                v-model="currentWord.recogOnly"
+                active-text="仅认读"
+                inactive-text=""
+                size="small"
+                @change="toggleRecogOnly(currentWord)"
+              />
+            </div>
+
+            <div style="margin-top: 20px">
+              <el-input
+                ref="practiceInputRef"
+                v-model="practiceInput"
+                :class="{ 'spell-wrong': practiceShowWrong }"
+                size="large"
+                placeholder="请拼写上方单词..."
+                style="font-size: 20px; max-width: 400px"
+                @keyup.enter="checkPractice"
+                @keydown.delete="onPracticeDelete"
+              />
+            </div>
+
+            <!-- 拼写结果反馈 -->
+            <transition name="fade">
+              <div v-if="practiceFeedback" style="margin-top: 20px">
+                <el-tag v-if="practiceFeedback === 'correct'" type="success" size="large" style="font-size: 16px">
+                  ✅ 正确！
+                </el-tag>
+                <div v-if="practiceFeedback === 'wrong'">
+                  <el-tag type="danger" size="large" style="font-size: 16px; margin-bottom: 10px">
+                    ❌ 拼写有误，请重新输入
+                  </el-tag>
+                </div>
+              </div>
+            </transition>
+
+            <div style="margin-top: 30px">
+              <el-button
+                type="primary"
+                size="large"
+                style="font-size: 18px; padding: 12px 30px"
+                @click="checkPractice"
+              >
+                确认拼写
+              </el-button>
+            </div>
+          </template>
+
           <!-- 默写模式 -->
           <template v-if="phase === 'spell'">
             <div style="margin-bottom: 30px">
               <div style="font-size: 24px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
               <div style="font-size: 18px; color: #909399">{{ currentWord.exampleMeaning }}</div>
+            </div>
+
+            <!-- 仅认读标记 -->
+            <div style="margin-bottom: 10px">
+              <el-switch
+                v-model="currentWord.recogOnly"
+                active-text="仅认读"
+                inactive-text=""
+                size="small"
+                @change="toggleRecogOnly(currentWord)"
+              />
             </div>
 
             <div style="margin-top: 30px">
@@ -165,7 +251,9 @@
           </el-col>
         </el-row>
         <div style="margin-top: 20px; color: #909399">
-          共复习 {{ totalWordCount }} 个单词<span v-if="reviewMode !== 'recog'">，默写循环 {{ spellRound }} 轮</span>
+          共复习 {{ totalWordCount }} 个单词
+          <span v-if="recogOnlyCount > 0">（其中 {{ recogOnlyCount }} 个仅认读）</span>
+          <span v-if="reviewMode !== 'recog'">，默写循环 {{ spellRound }} 轮</span>
         </div>
       </div>
       <template #footer>
@@ -218,12 +306,18 @@ const originalList = ref([])
 const activeList = ref([])
 
 const currentIndex = ref(0)
-// phase: 'recog' | 'spell'
+// phase: 'recog' | 'practice' | 'spell'
 const phase = ref('recog')
 
 // 认读阶段
 const recogAnswered = ref(false)
 const recogFlashClass = ref('')
+
+// 拼写练习阶段
+const practiceInput = ref('')
+const practiceFeedback = ref('') // '' | 'correct' | 'wrong'
+const practiceShowWrong = ref(false)
+const practiceInputRef = ref(null)
 
 // 默写阶段
 const spellInput = ref('')
@@ -252,10 +346,25 @@ const currentWord = computed(() => activeList.value[currentIndex.value] || {})
 
 const totalWordCount = computed(() => originalList.value.length)
 
+const recogOnlyCount = computed(() => originalList.value.filter(w => w.recogOnly).length)
+
 const phaseLabel = computed(() => {
   if (phase.value === 'recog') return '📖 认读模式'
+  if (phase.value === 'practice') return '✏️ 拼写练习'
   if (spellRound.value === 1) return '✍️ 默写模式'
   return `✍️ 默写第 ${spellRound.value} 轮`
+})
+
+const phaseTagType = computed(() => {
+  if (phase.value === 'recog') return 'primary'
+  if (phase.value === 'practice') return 'warning'
+  return 'success'
+})
+
+const phaseProgressColor = computed(() => {
+  if (phase.value === 'recog') return '#409EFF'
+  if (phase.value === 'practice') return '#E6A23C'
+  return '#67C23A'
 })
 
 const progressPercent = computed(() => {
@@ -281,8 +390,8 @@ const spellAccuracy = computed(() => {
 // ==================== 键盘事件 ====================
 const handleKeydown = (e) => {
   if (!reviewing.value) return
-  // 默写模式下输入框有焦点时不拦截
-  if (phase.value === 'spell') return
+  // 拼写练习和默写模式下输入框有焦点时不拦截
+  if (phase.value === 'practice' || phase.value === 'spell') return
 
   if (phase.value === 'recog') {
     if (e.key === 'ArrowLeft') {
@@ -342,19 +451,29 @@ const startReview = async (mode) => {
       return
     }
     originalList.value = res
-    activeList.value = [...res]
     currentIndex.value = 0
     reviewMode.value = mode
 
     // 根据模式设置初始阶段
     if (mode === 'spell') {
       phase.value = 'spell'
+      // 仅默写模式：过滤掉仅认读的词
+      activeList.value = res.filter(w => !w.recogOnly)
+      if (activeList.value.length === 0) {
+        ElMessage.info('所有单词均为仅认读，无需默写')
+        loading.value = false
+        return
+      }
     } else {
       phase.value = 'recog'
+      activeList.value = [...res]
     }
 
     recogAnswered.value = false
     recogFlashClass.value = ''
+    practiceInput.value = ''
+    practiceFeedback.value = ''
+    practiceShowWrong.value = false
     spellInput.value = ''
     spellFeedback.value = ''
     spellShowWrong.value = false
@@ -414,8 +533,8 @@ const recogNext = () => {
       // 仅认读模式，直接结束
       showResult.value = true
     } else {
-      // 完整模式，进入默写阶段
-      enterSpellPhase()
+      // 完整模式，进入拼写练习阶段
+      enterPracticePhase()
     }
   }
 }
@@ -429,14 +548,96 @@ const recogPrev = () => {
   }
 }
 
+// ==================== 拼写练习阶段 ====================
+
+const enterPracticePhase = () => {
+  phase.value = 'practice'
+  // 过滤掉仅认读的词
+  activeList.value = originalList.value.filter(w => !w.recogOnly)
+  if (activeList.value.length === 0) {
+    // 没有需要拼写练习的词，直接进入默写阶段
+    enterSpellPhase()
+    return
+  }
+  currentIndex.value = 0
+  practiceInput.value = ''
+  practiceFeedback.value = ''
+  practiceShowWrong.value = false
+  nextTick(() => {
+    practiceInputRef.value?.focus()
+  })
+}
+
+// 拼写练习输入框按删除键：如果当前显示着错误反馈，清空输入内容
+const onPracticeDelete = (e) => {
+  if (practiceFeedback.value === 'wrong') {
+    e.preventDefault()
+    practiceInput.value = ''
+    practiceFeedback.value = ''
+    practiceShowWrong.value = false
+  }
+}
+
+const checkPractice = () => {
+  if (!practiceInput.value.trim()) {
+    ElMessage.warning('请输入单词')
+    return
+  }
+
+  const input = practiceInput.value.trim().toLowerCase()
+  const correct = currentWord.value.word.trim().toLowerCase()
+  const isCorrect = input === correct
+
+  if (isCorrect) {
+    practiceFeedback.value = 'correct'
+    practiceShowWrong.value = false
+    // 正确后 0.8 秒自动跳下一个
+    setTimeout(() => {
+      practiceNext()
+    }, 800)
+  } else {
+    // 错误：提示重新输入
+    practiceFeedback.value = 'wrong'
+    practiceShowWrong.value = true
+    nextTick(() => {
+      practiceInputRef.value?.focus()
+    })
+  }
+}
+
+// 拼写练习：正确后跳下一个
+const practiceNext = () => {
+  if (currentIndex.value < activeList.value.length - 1) {
+    currentIndex.value++
+    practiceInput.value = ''
+    practiceFeedback.value = ''
+    practiceShowWrong.value = false
+    nextTick(() => {
+      practiceInputRef.value?.focus()
+    })
+  } else {
+    // 拼写练习完成，进入默写阶段
+    enterSpellPhase()
+  }
+}
+
 // ==================== 默写阶段 ====================
 
 const enterSpellPhase = () => {
   phase.value = 'spell'
+  // 过滤掉仅认读的词
+  activeList.value = originalList.value.filter(w => !w.recogOnly)
+  if (activeList.value.length === 0) {
+    // 没有需要默写的词，复习完成
+    showResult.value = true
+    return
+  }
   currentIndex.value = 0
   spellInput.value = ''
   spellFeedback.value = ''
   spellShowWrong.value = false
+  spellRound.value = 1
+  spellWrongInRound.value = []
   nextTick(() => {
     spellInputRef.value?.focus()
   })
@@ -477,7 +678,8 @@ const checkSpelling = async () => {
   if (isCorrect) {
     spellFeedback.value = 'correct'
     spellShowWrong.value = false
-    if (spellRound.value === 1) {
+    // 只记录第一轮首次尝试结果，已有记录则不覆盖
+    if (spellRound.value === 1 && !(currentWord.value.id in spellFirstResult.value)) {
       spellFirstResult.value[currentWord.value.id] = true
     }
     // 正确后 0.8 秒自动跳下一个
@@ -540,6 +742,21 @@ const startNextSpellRound = () => {
   nextTick(() => {
     spellInputRef.value?.focus()
   })
+}
+
+// 切换仅认读标记
+const toggleRecogOnly = async (word) => {
+  try {
+    await api.put(`/words/${word.id}/recog-only`, { recogOnly: word.recogOnly })
+    // 同步更新 originalList 中对应词的 recogOnly
+    const orig = originalList.value.find(w => w.id === word.id)
+    if (orig) orig.recogOnly = word.recogOnly
+    ElMessage.success(word.recogOnly ? '已设为仅认读，后续不再默写' : '已取消仅认读')
+  } catch (e) {
+    // 回滚
+    word.recogOnly = !word.recogOnly
+    ElMessage.error('更新失败')
+  }
 }
 
 // 退出复习

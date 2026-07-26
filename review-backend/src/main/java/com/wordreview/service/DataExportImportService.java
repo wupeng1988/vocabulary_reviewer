@@ -72,6 +72,7 @@ public class DataExportImportService {
             wordMap.put("spellWrong", w.getSpellWrong());
             wordMap.put("consecutiveCorrect", w.getConsecutiveCorrect());
             wordMap.put("isDormant", w.getIsDormant());
+            wordMap.put("recogOnly", w.getRecogOnly());
             wordList.add(wordMap);
         }
         exportData.put("words", wordList);
@@ -171,6 +172,9 @@ public class DataExportImportService {
                 }
                 if (wordMap.get("isDormant") != null) {
                     word.setIsDormant((Boolean) wordMap.get("isDormant"));
+                }
+                if (wordMap.get("recogOnly") != null) {
+                    word.setRecogOnly((Boolean) wordMap.get("recogOnly"));
                 }
 
                 // 解析 lastReviewDate
