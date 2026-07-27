@@ -295,7 +295,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
@@ -400,11 +400,21 @@ const spellAccuracy = computed(() => {
 
 // ==================== 音频播放 ====================
 
+/**
+ * 单词归一化：转小写 + 将各种 Unicode 连字符统一为普通连字符 (U+002D)
+ * 解决 germ‑free (U+2011 non-breaking hyphen) vs germ-free (U+002D) 的拼写校验问题
+ */
+const normalizeWord = (str) => {
+  return str
+    .toLowerCase()
+    .replace(/[‐‑‒–—―﹘﹣－]/g, '-')
+}
+
 // 当前正在播放的音频对象，用于中断上一次播放
 let currentAudio = null
 
 /**
- * 播放单词发音。
+ * 播放单词发音（仅手动调用，不在默写阶段自动播放）。
  * 1. 直接尝试加载音频文件
  * 2. 如果返回 202（正在生成），轮询等待就绪后播放
  */
@@ -449,12 +459,14 @@ const playWordAudio = async (word) => {
   }
 }
 
-// 监听当前单词变化，自动播放发音（默写阶段不自动播放，需手动点击播放按钮）
-watch(() => currentWord.value?.word, (newWord) => {
-  if (newWord && reviewing.value && phase.value !== 'spell') {
-    playWordAudio(newWord)
+/**
+ * 切换到新单词后自动播放音频（仅认读和拼写练习阶段，默写阶段不自动播放）。
+ */
+const autoPlayOnWordChange = (word) => {
+  if (word && reviewing.value && phase.value !== 'spell') {
+    playWordAudio(word)
   }
-})
+}
 
 // ==================== 键盘事件 ====================
 const handleKeydown = (e) => {
@@ -553,6 +565,9 @@ const startReview = async (mode) => {
     spellRound.value = 1
     reviewing.value = true
 
+    // 自动播放第一个单词的音频
+    autoPlayOnWordChange(res[0]?.word)
+
     // 默写模式自动聚焦输入框
     if (mode === 'spell') {
       nextTick(() => {
@@ -596,6 +611,7 @@ const recogNext = () => {
     currentIndex.value++
     recogAnswered.value = false
     recogFlashClass.value = ''
+    autoPlayOnWordChange(currentWord.value.word)
   } else {
     // 认读全部完成
     if (reviewMode.value === 'recog') {
@@ -614,6 +630,7 @@ const recogPrev = () => {
     currentIndex.value--
     recogAnswered.value = false
     recogFlashClass.value = ''
+    autoPlayOnWordChange(currentWord.value.word)
   }
 }
 
@@ -632,6 +649,7 @@ const enterPracticePhase = () => {
   practiceInput.value = ''
   practiceFeedback.value = ''
   practiceShowWrong.value = false
+  autoPlayOnWordChange(activeList.value[0]?.word)
   nextTick(() => {
     practiceInputRef.value?.focus()
   })
@@ -648,13 +666,15 @@ const onPracticeDelete = (e) => {
 }
 
 const checkPractice = () => {
+  // 防重入：正确后等待自动跳转期间，忽略后续回车
+  if (practiceFeedback.value === 'correct') return
   if (!practiceInput.value.trim()) {
     ElMessage.warning('请输入单词')
     return
   }
 
-  const input = practiceInput.value.trim().toLowerCase()
-  const correct = currentWord.value.word.trim().toLowerCase()
+  const input = normalizeWord(practiceInput.value.trim())
+  const correct = normalizeWord(currentWord.value.word.trim())
   const isCorrect = input === correct
 
   if (isCorrect) {
@@ -681,6 +701,7 @@ const practiceNext = () => {
     practiceInput.value = ''
     practiceFeedback.value = ''
     practiceShowWrong.value = false
+    autoPlayOnWordChange(currentWord.value.word)
     nextTick(() => {
       practiceInputRef.value?.focus()
     })
@@ -724,13 +745,15 @@ const onSpellDelete = (e) => {
 }
 
 const checkSpelling = async () => {
+  // 防重入：正确后等待自动跳转期间，忽略后续回车
+  if (spellFeedback.value === 'correct') return
   if (!spellInput.value.trim()) {
     ElMessage.warning('请输入单词')
     return
   }
 
-  const input = spellInput.value.trim().toLowerCase()
-  const correct = currentWord.value.word.trim().toLowerCase()
+  const input = normalizeWord(spellInput.value.trim())
+  const correct = normalizeWord(currentWord.value.word.trim())
   const isCorrect = input === correct
 
   // 上报后端
@@ -751,6 +774,8 @@ const checkSpelling = async () => {
     if (spellRound.value === 1 && !(currentWord.value.id in spellFirstResult.value)) {
       spellFirstResult.value[currentWord.value.id] = true
     }
+    // 拼写完成后播放一次音频
+    playWordAudio(currentWord.value.word)
     // 正确后 0.8 秒自动跳下一个
     setTimeout(() => {
       spellNext()
@@ -766,6 +791,8 @@ const checkSpelling = async () => {
     if (!spellWrongInRound.value.includes(currentWord.value.id)) {
       spellWrongInRound.value.push(currentWord.value.id)
     }
+    // 拼写完成后播放一次音频
+    playWordAudio(currentWord.value.word)
     // 不清空输入框，保留用户输入内容供对比；用户按删除键时再清空
     nextTick(() => {
       spellInputRef.value?.focus()
