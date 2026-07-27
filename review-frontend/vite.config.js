@@ -13,6 +13,10 @@ export default defineConfig({
       '/h2-console': {
         target: 'http://localhost:8080',
         changeOrigin: true
+      },
+      '/audio': {
+        target: 'http://localhost:8080',
+        changeOrigin: true
       }
     }
   }

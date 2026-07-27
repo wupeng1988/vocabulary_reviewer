@@ -3,6 +3,7 @@ package com.wordreview.controller;
 import com.wordreview.dto.WordPageResponse;
 import com.wordreview.entity.Word;
 import com.wordreview.repository.WordRepository;
+import com.wordreview.service.AudioGenerationTaskService;
 import com.wordreview.service.DataExportImportService;
 import com.wordreview.service.ExcelImportService;
 import lombok.RequiredArgsConstructor;
@@ -29,12 +30,15 @@ public class WordController {
     private final ExcelImportService excelImportService;
     private final DataExportImportService dataExportImportService;
     private final WordRepository wordRepository;
+    private final AudioGenerationTaskService audioGenerationTaskService;
 
     /** 上传 Excel 并解析入库 */
     @PostMapping("/import")
     public ResponseEntity<Map<String, Object>> importExcel(@RequestParam("file") MultipartFile file) {
         try {
             int count = excelImportService.importExcel(file);
+            // 导入完成后，异步生成缺失音频
+            audioGenerationTaskService.startBatchGeneration();
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("count", count);
@@ -120,6 +124,8 @@ public class WordController {
     public ResponseEntity<Map<String, Object>> importData(@RequestParam("file") MultipartFile file) {
         try {
             int count = dataExportImportService.importData(file);
+            // 导入完成后，异步生成缺失音频
+            audioGenerationTaskService.startBatchGeneration();
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
             result.put("count", count);

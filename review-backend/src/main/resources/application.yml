@@ -22,3 +22,7 @@ spring:
 
 server:
   port: 8080
+
+# 单词复习应用配置
+wordreview:
+  audio-dir: audio

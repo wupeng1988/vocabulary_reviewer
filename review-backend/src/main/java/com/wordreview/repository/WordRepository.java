@@ -17,6 +17,10 @@ public interface WordRepository extends JpaRepository<Word, Long> {
 
     Optional<Word> findByWord(String word);
 
+    /** 查询所有单词的文本（小写），用于批量音频生成扫描 */
+    @Query("SELECT LOWER(w.word) FROM Word w")
+    List<String> findAllWords();
+
     /** 分页搜索：按生词或含义模糊匹配 */
     Page<Word> findByWordContainingOrMeaningContaining(String word, String meaning, Pageable pageable);
 

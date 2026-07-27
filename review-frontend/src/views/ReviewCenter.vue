@@ -60,6 +60,9 @@
             <div :class="['recog-card', recogFlashClass]">
               <div style="font-size: 42px; font-weight: bold; margin-bottom: 10px">
                 {{ currentWord.word }}
+                <el-button link size="small" @click="playWordAudio(currentWord.word)" style="vertical-align: middle; margin-left: 8px">
+                  🔊
+                </el-button>
               </div>
               <div style="font-size: 20px; color: #909399; margin-bottom: 30px">
                 {{ currentWord.phonetic || '' }}
@@ -116,6 +119,9 @@
             <div style="margin-bottom: 20px; padding: 20px; background: #f5f7fa; border-radius: 8px">
               <div style="font-size: 36px; font-weight: bold; margin-bottom: 8px">
                 {{ currentWord.word }}
+                <el-button link size="small" @click="playWordAudio(currentWord.word)" style="vertical-align: middle; margin-left: 8px">
+                  🔊
+                </el-button>
               </div>
               <div style="font-size: 18px; color: #909399; margin-bottom: 12px">
                 {{ currentWord.phonetic || '' }}
@@ -178,6 +184,11 @@
           <!-- 默写模式 -->
           <template v-if="phase === 'spell'">
             <div style="margin-bottom: 30px">
+              <div style="margin-bottom: 10px">
+                <el-button link size="small" @click="playWordAudio(currentWord.word)">
+                  🔊 播放发音
+                </el-button>
+              </div>
               <div style="font-size: 24px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
               <div style="font-size: 18px; color: #909399">{{ currentWord.exampleMeaning }}</div>
             </div>
@@ -284,7 +295,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
@@ -385,6 +396,64 @@ const spellAccuracy = computed(() => {
   const total = results.length
   const correct = results.filter(r => r).length
   return total > 0 ? Math.round(correct / total * 10000) / 100 : 0
+})
+
+// ==================== 音频播放 ====================
+
+// 当前正在播放的音频对象，用于中断上一次播放
+let currentAudio = null
+
+/**
+ * 播放单词发音。
+ * 1. 直接尝试加载音频文件
+ * 2. 如果返回 202（正在生成），轮询等待就绪后播放
+ */
+const playWordAudio = async (word) => {
+  if (!word) return
+
+  // 停止上一次播放
+  if (currentAudio) {
+    currentAudio.pause()
+    currentAudio = null
+  }
+
+  const audioUrl = `/api/audio/${word.trim().toLowerCase()}`
+
+  try {
+    // 先尝试直接播放
+    const audio = new Audio(audioUrl)
+    currentAudio = audio
+    await audio.play()
+    return
+  } catch (e) {
+    // 播放失败，可能是音频还没生成（202）或其他错误
+    currentAudio = null
+  }
+
+  // 轮询等待音频就绪
+  try {
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500))
+      const res = await fetch(`${audioUrl}/status`)
+      const data = await res.json()
+      if (data.status === 'ready') {
+        const audio = new Audio(audioUrl)
+        currentAudio = audio
+        await audio.play()
+        return
+      }
+    }
+    // 超时，静默忽略
+  } catch (e) {
+    // 轮询失败，静默忽略
+  }
+}
+
+// 监听当前单词变化，自动播放发音（默写阶段不自动播放，需手动点击播放按钮）
+watch(() => currentWord.value?.word, (newWord) => {
+  if (newWord && reviewing.value && phase.value !== 'spell') {
+    playWordAudio(newWord)
+  }
 })
 
 // ==================== 键盘事件 ====================

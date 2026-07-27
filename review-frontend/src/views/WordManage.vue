@@ -18,6 +18,13 @@
         </el-col>
         <el-col :span="4">
           <el-button type="primary" @click="loadWords">搜索</el-button>
+          <el-button
+            :type="batchRunning ? 'warning' : 'success'"
+            :loading="batchChecking"
+            @click="triggerBatchGeneration"
+          >
+            {{ batchRunning ? '音频生成中...' : '🔊 生成音频' }}
+          </el-button>
         </el-col>
         <el-col :span="12" style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 10px">
           <el-button :type="hideMeaning ? 'warning' : 'default'" size="small" @click="hideMeaning = !hideMeaning">
@@ -97,7 +104,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
@@ -109,6 +116,72 @@ const pageSize = ref(20)
 const totalElements = ref(0)
 const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
+const batchRunning = ref(false)
+const batchChecking = ref(false)
+
+// 轮询批量生成状态
+let batchPollTimer = null
+
+const checkBatchStatus = async () => {
+  try {
+    const res = await api.get('/audio/batch/status')
+    batchRunning.value = res.status === 'running'
+    if (batchRunning.value && !batchPollTimer) {
+      // 任务在运行，启动轮询
+      batchPollTimer = setInterval(async () => {
+        try {
+          const r = await api.get('/audio/batch/status')
+          batchRunning.value = r.status === 'running'
+          if (!batchRunning.value) {
+            clearInterval(batchPollTimer)
+            batchPollTimer = null
+            ElMessage.success('批量音频生成已完成')
+          }
+        } catch {
+          clearInterval(batchPollTimer)
+          batchPollTimer = null
+          batchRunning.value = false
+        }
+      }, 5000)
+    }
+  } catch {
+    batchRunning.value = false
+  }
+}
+
+const triggerBatchGeneration = async () => {
+  batchChecking.value = true
+  try {
+    const res = await api.post('/audio/batch')
+    if (res.status === 'running') {
+      ElMessage.info('批量生成任务正在执行中，请稍候')
+    } else {
+      ElMessage.success('批量音频生成任务已启动')
+    }
+    batchRunning.value = true
+    // 启动轮询
+    if (!batchPollTimer) {
+      batchPollTimer = setInterval(async () => {
+        try {
+          const r = await api.get('/audio/batch/status')
+          batchRunning.value = r.status === 'running'
+          if (!batchRunning.value) {
+            clearInterval(batchPollTimer)
+            batchPollTimer = null
+            ElMessage.success('批量音频生成已完成')
+          }
+        } catch {
+          clearInterval(batchPollTimer)
+          batchPollTimer = null
+          batchRunning.value = false
+        }
+      }, 5000)
+    }
+  } catch {
+    ElMessage.error('启动批量生成失败')
+  }
+  batchChecking.value = false
+}
 
 const loadWords = async () => {
   try {
@@ -149,6 +222,14 @@ const toggleRecogOnly = async (row) => {
 
 onMounted(() => {
   loadWords()
+  checkBatchStatus()
+})
+
+onUnmounted(() => {
+  if (batchPollTimer) {
+    clearInterval(batchPollTimer)
+    batchPollTimer = null
+  }
 })
 </script>
 
