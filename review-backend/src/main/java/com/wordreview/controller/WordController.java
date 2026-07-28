@@ -183,4 +183,41 @@ public class WordController {
             return ResponseEntity.notFound().build();
         });
     }
+
+    /** 更新单词内容（生词、音标、含义、例句、例句释义） */
+    @PutMapping("/{id}")
+    public ResponseEntity<Map<String, Object>> updateWord(
+            @PathVariable Long id, @RequestBody Map<String, String> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            return wordRepository.findById(id).map(word -> {
+                String newWord = body.get("word");
+                if (newWord != null && !newWord.trim().isEmpty()) {
+                    // 检查新单词是否与其他单词冲突
+                    wordRepository.findByWord(newWord.trim()).ifPresent(existing -> {
+                        if (!existing.getId().equals(id)) {
+                            throw new IllegalArgumentException("单词 '" + newWord.trim() + "' 已存在");
+                        }
+                    });
+                    word.setWord(newWord.trim());
+                }
+                if (body.containsKey("phonetic")) word.setPhonetic(body.get("phonetic"));
+                if (body.containsKey("meaning")) word.setMeaning(body.get("meaning"));
+                if (body.containsKey("exampleSentence")) word.setExampleSentence(body.get("exampleSentence"));
+                if (body.containsKey("exampleMeaning")) word.setExampleMeaning(body.get("exampleMeaning"));
+                wordRepository.save(word);
+                result.put("success", true);
+                result.put("message", "更新成功");
+                return ResponseEntity.ok(result);
+            }).orElseGet(() -> {
+                result.put("success", false);
+                result.put("message", "单词不存在");
+                return ResponseEntity.notFound().build();
+            });
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
 }

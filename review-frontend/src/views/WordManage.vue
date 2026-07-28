@@ -76,8 +76,9 @@
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80" align="center" fixed="right">
+        <el-table-column label="操作" width="130" align="center" fixed="right">
           <template #default="{ row }">
+            <el-button type="primary" size="small" link @click="openEditDialog(row)">编辑</el-button>
             <el-popconfirm title="确定删除该单词？" @confirm="deleteWord(row.id)">
               <template #reference>
                 <el-button type="danger" size="small" link>删除</el-button>
@@ -100,6 +101,31 @@
         />
       </div>
     </el-card>
+
+    <!-- 编辑弹窗 -->
+    <el-dialog v-model="showEditDialog" title="编辑单词" width="550px" :close-on-click-modal="false">
+      <el-form :model="editForm" label-width="90px">
+        <el-form-item label="生词" required>
+          <el-input v-model="editForm.word" placeholder="英文单词" />
+        </el-form-item>
+        <el-form-item label="音标">
+          <el-input v-model="editForm.phonetic" placeholder="/ˈeksəmpəl/" />
+        </el-form-item>
+        <el-form-item label="含义" required>
+          <el-input v-model="editForm.meaning" type="textarea" :rows="2" placeholder="中文含义" />
+        </el-form-item>
+        <el-form-item label="例句">
+          <el-input v-model="editForm.exampleSentence" type="textarea" :rows="2" placeholder="英文例句" />
+        </el-form-item>
+        <el-form-item label="例句释义">
+          <el-input v-model="editForm.exampleMeaning" type="textarea" :rows="2" placeholder="例句的中文翻译" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -218,6 +244,58 @@ const toggleRecogOnly = async (row) => {
     row.recogOnly = !row.recogOnly
     ElMessage.error('更新失败')
   }
+}
+
+// ==================== 编辑 ====================
+const showEditDialog = ref(false)
+const editSaving = ref(false)
+const editForm = ref({
+  id: null,
+  word: '',
+  phonetic: '',
+  meaning: '',
+  exampleSentence: '',
+  exampleMeaning: ''
+})
+
+const openEditDialog = (row) => {
+  editForm.value = {
+    id: row.id,
+    word: row.word,
+    phonetic: row.phonetic || '',
+    meaning: row.meaning || '',
+    exampleSentence: row.exampleSentence || '',
+    exampleMeaning: row.exampleMeaning || ''
+  }
+  showEditDialog.value = true
+}
+
+const saveEdit = async () => {
+  if (!editForm.value.word.trim()) {
+    ElMessage.warning('生词不能为空')
+    return
+  }
+  if (!editForm.value.meaning.trim()) {
+    ElMessage.warning('含义不能为空')
+    return
+  }
+  editSaving.value = true
+  try {
+    await api.put(`/words/${editForm.value.id}`, {
+      word: editForm.value.word,
+      phonetic: editForm.value.phonetic,
+      meaning: editForm.value.meaning,
+      exampleSentence: editForm.value.exampleSentence,
+      exampleMeaning: editForm.value.exampleMeaning
+    })
+    ElMessage.success('保存成功')
+    showEditDialog.value = false
+    loadWords()
+  } catch (e) {
+    const msg = e?.response?.data?.message || '保存失败'
+    ElMessage.error(msg)
+  }
+  editSaving.value = false
 }
 
 onMounted(() => {

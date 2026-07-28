@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Word Review Pro 一键启停脚本
-# 用法: ./dev.sh start | stop | status
+# 用法: ./dev.sh start | stop | restart | status
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$PROJECT_DIR/review-backend"
@@ -129,15 +129,29 @@ case "$1" in
         echo ""
         show_status
         ;;
+    restart)
+        echo "━━━ 重启 Word Review Pro ━━━"
+        stop_frontend
+        stop_backend
+        echo ""
+        sleep 2
+        start_backend
+        start_frontend
+        echo ""
+        show_status
+        echo ""
+        echo "🌐 访问地址: http://localhost:$FRONTEND_PORT"
+        ;;
     status)
         show_status
         ;;
     *)
-        echo "用法: $0 {start|stop|status}"
+        echo "用法: $0 {start|stop|restart|status}"
         echo ""
-        echo "  start  - 一键启动前后端"
-        echo "  stop   - 一键停止前后端"
-        echo "  status - 查看运行状态"
+        echo "  start   - 一键启动前后端"
+        echo "  stop    - 一键停止前后端"
+        echo "  restart - 一键重启前后端（先停后启）"
+        echo "  status  - 查看运行状态"
         exit 1
         ;;
 esac
