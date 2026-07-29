@@ -15,6 +15,9 @@
           <el-button type="warning" size="large" @click="startReview('recog')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
             📖 仅认读复习
           </el-button>
+          <el-button type="info" size="large" @click="startReview('practice')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
+            ✏️ 仅拼写练习
+          </el-button>
           <el-button type="success" size="large" @click="startReview('spell')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
             ✍️ 仅默写复习
           </el-button>
@@ -254,17 +257,17 @@
     <el-dialog v-model="showResult" title="🎉 本次复习完成" width="500px" :close-on-click-modal="false">
       <div style="text-align: center; padding: 20px">
         <el-row :gutter="30">
-          <el-col :span="12">
+          <el-col v-if="reviewMode !== 'practice'" :span="12">
             <el-statistic title="认读正确率" :value="recogAccuracy" suffix="%" />
           </el-col>
-          <el-col :span="12">
-            <el-statistic title="默写正确率" :value="spellAccuracy" suffix="%" />
+          <el-col v-if="reviewMode !== 'recog'" :span="reviewMode === 'practice' ? 24 : 12">
+            <el-statistic :title="reviewMode === 'practice' ? '拼写练习完成' : '默写正确率'" :value="reviewMode === 'practice' ? totalWordCount : spellAccuracy" :suffix="reviewMode === 'practice' ? '个单词' : '%'" />
           </el-col>
         </el-row>
         <div style="margin-top: 20px; color: #909399">
           共复习 {{ totalWordCount }} 个单词
           <span v-if="recogOnlyCount > 0">（其中 {{ recogOnlyCount }} 个仅认读）</span>
-          <span v-if="reviewMode !== 'recog'">，默写循环 {{ spellRound }} 轮</span>
+          <span v-if="reviewMode !== 'recog' && reviewMode !== 'practice'">，默写循环 {{ spellRound }} 轮</span>
         </div>
       </div>
       <template #footer>
@@ -521,7 +524,7 @@ const saveConfig = async () => {
   }
 }
 
-// 开始复习，mode: 'both' | 'recog' | 'spell'
+// 开始复习，mode: 'both' | 'recog' | 'practice' | 'spell'
 const startReview = async (mode) => {
   loading.value = true
   try {
@@ -545,6 +548,15 @@ const startReview = async (mode) => {
         loading.value = false
         return
       }
+    } else if (mode === 'practice') {
+      // 仅拼写练习模式：直接进入拼写练习
+      activeList.value = res.filter(w => !w.recogOnly)
+      if (activeList.value.length === 0) {
+        ElMessage.info('所有单词均为仅认读，无需拼写练习')
+        loading.value = false
+        return
+      }
+      phase.value = 'practice'
     } else {
       phase.value = 'recog'
       activeList.value = [...res]
@@ -568,8 +580,12 @@ const startReview = async (mode) => {
     // 自动播放第一个单词的音频
     autoPlayOnWordChange(res[0]?.word)
 
-    // 默写模式自动聚焦输入框
-    if (mode === 'spell') {
+    // 拼写练习或默写模式自动聚焦输入框
+    if (mode === 'practice') {
+      nextTick(() => {
+        practiceInputRef.value?.focus()
+      })
+    } else if (mode === 'spell') {
       nextTick(() => {
         spellInputRef.value?.focus()
       })
@@ -706,8 +722,14 @@ const practiceNext = () => {
       practiceInputRef.value?.focus()
     })
   } else {
-    // 拼写练习完成，进入默写阶段
-    enterSpellPhase()
+    // 拼写练习完成
+    if (reviewMode.value === 'practice') {
+      // 仅拼写练习模式，直接结束
+      showResult.value = true
+    } else {
+      // 完整模式，进入默写阶段
+      enterSpellPhase()
+    }
   }
 }
 
