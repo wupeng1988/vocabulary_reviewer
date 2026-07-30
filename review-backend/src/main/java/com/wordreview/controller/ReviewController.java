@@ -52,9 +52,22 @@ public class ReviewController {
     @GetMapping("/generate")
     public ResponseEntity<List<Map<String, Object>>> generateReviewList() {
         List<Word> words = reviewService.generateReviewList();
+        return ResponseEntity.ok(toDisplayList(words));
+    }
 
-        // 仅返回展示字段，不暴露统计元数据
-        List<Map<String, Object>> result = words.stream().map(w -> {
+    /** 根据指定单词ID生成复习列表 */
+    @GetMapping("/generate-by-ids")
+    public ResponseEntity<List<Map<String, Object>>> generateReviewListByIds(@RequestParam("ids") List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        List<Word> words = reviewService.generateReviewListByIds(ids);
+        return ResponseEntity.ok(toDisplayList(words));
+    }
+
+    /** 将 Word 列表转为展示字段 Map 列表 */
+    private List<Map<String, Object>> toDisplayList(List<Word> words) {
+        return words.stream().map(w -> {
             Map<String, Object> item = new HashMap<>();
             item.put("id", w.getId());
             item.put("word", w.getWord());
@@ -65,8 +78,6 @@ public class ReviewController {
             item.put("recogOnly", w.getRecogOnly());
             return item;
         }).collect(Collectors.toList());
-
-        return ResponseEntity.ok(result);
     }
 
     /** 上报单次复习结果 */

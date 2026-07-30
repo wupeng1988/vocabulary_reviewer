@@ -257,17 +257,17 @@
     <el-dialog v-model="showResult" title="🎉 本次复习完成" width="500px" :close-on-click-modal="false">
       <div style="text-align: center; padding: 20px">
         <el-row :gutter="30">
-          <el-col v-if="reviewMode !== 'practice'" :span="12">
+          <el-col v-if="hasRecogPhase" :span="hasSpellPhase ? 12 : 24">
             <el-statistic title="认读正确率" :value="recogAccuracy" suffix="%" />
           </el-col>
-          <el-col v-if="reviewMode !== 'recog'" :span="reviewMode === 'practice' ? 24 : 12">
-            <el-statistic :title="reviewMode === 'practice' ? '拼写练习完成' : '默写正确率'" :value="reviewMode === 'practice' ? totalWordCount : spellAccuracy" :suffix="reviewMode === 'practice' ? '个单词' : '%'" />
+          <el-col v-if="hasSpellPhase" :span="hasRecogPhase ? 12 : 24">
+            <el-statistic :title="hasPracticePhase && !hasSpellPhase ? '拼写练习完成' : '默写正确率'" :value="hasPracticePhase && !hasSpellPhase ? totalWordCount : spellAccuracy" :suffix="hasPracticePhase && !hasSpellPhase ? '个单词' : '%'" />
           </el-col>
         </el-row>
         <div style="margin-top: 20px; color: #909399">
           共复习 {{ totalWordCount }} 个单词
           <span v-if="recogOnlyCount > 0">（其中 {{ recogOnlyCount }} 个仅认读）</span>
-          <span v-if="reviewMode !== 'recog' && reviewMode !== 'practice'">，默写循环 {{ spellRound }} 轮</span>
+          <span v-if="hasSpellPhase">，默写循环 {{ spellRound }} 轮</span>
         </div>
       </div>
       <template #footer>
@@ -300,7 +300,11 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+
+const route = useRoute()
+const router = useRouter()
 
 // ==================== 配置 ====================
 const config = ref({ batchSize: 50, maxDormantDays: 15, emergencyWeight: 0.7 })
@@ -311,8 +315,11 @@ const showConfigDialog = ref(false)
 const reviewing = ref(false)
 const loading = ref(false)
 
-// 复习模式: 'both' | 'recog' | 'spell'
+// 复习模式: 'both' | 'recog' | 'spell' | 'practice' | 'custom'
 const reviewMode = ref('both')
+
+// 自定义模式：从词库管理选中的阶段列表，如 ['recog', 'practice', 'spell']
+const customPhases = ref([])
 
 // 原始词表（从后端获取，不变）
 const originalList = ref([])
@@ -399,6 +406,22 @@ const spellAccuracy = computed(() => {
   const total = results.length
   const correct = results.filter(r => r).length
   return total > 0 ? Math.round(correct / total * 10000) / 100 : 0
+})
+
+// 当前复习是否包含各阶段
+const hasRecogPhase = computed(() => {
+  if (reviewMode.value === 'custom') return customPhases.value.includes('recog')
+  return reviewMode.value !== 'practice' && reviewMode.value !== 'spell'
+})
+
+const hasPracticePhase = computed(() => {
+  if (reviewMode.value === 'custom') return customPhases.value.includes('practice')
+  return reviewMode.value === 'practice' || reviewMode.value === 'both'
+})
+
+const hasSpellPhase = computed(() => {
+  if (reviewMode.value === 'custom') return customPhases.value.includes('spell')
+  return reviewMode.value === 'spell' || reviewMode.value === 'both'
 })
 
 // ==================== 音频播放 ====================
@@ -501,6 +524,37 @@ const handleKeydown = (e) => {
   }
 }
 
+// ==================== 自定义模式阶段跳转 ====================
+
+/**
+ * 自定义模式下，当前阶段完成后跳转到下一个阶段。
+ * customPhases 顺序如 ['recog', 'practice', 'spell']，
+ * 当前阶段完成后查找下一个阶段并进入。
+ */
+const goToNextPhase = (currentPhase) => {
+  const phases = customPhases.value
+  const idx = phases.indexOf(currentPhase)
+  if (idx === -1 || idx >= phases.length - 1) {
+    // 没有下一个阶段了，复习完成
+    showResult.value = true
+    return
+  }
+  const nextPhase = phases[idx + 1]
+  if (nextPhase === 'practice') {
+    enterPracticePhase()
+  } else if (nextPhase === 'spell') {
+    enterSpellPhase()
+  } else if (nextPhase === 'recog') {
+    // 不太可能，但处理一下
+    phase.value = 'recog'
+    activeList.value = [...originalList.value]
+    currentIndex.value = 0
+    recogAnswered.value = false
+    recogFlashClass.value = ''
+    autoPlayOnWordChange(activeList.value[0]?.word)
+  }
+}
+
 // ==================== 方法 ====================
 
 const loadConfig = async () => {
@@ -524,11 +578,20 @@ const saveConfig = async () => {
   }
 }
 
-// 开始复习，mode: 'both' | 'recog' | 'practice' | 'spell'
-const startReview = async (mode) => {
+// 开始复习，mode: 'both' | 'recog' | 'practice' | 'spell' | 'custom'
+// customPhases: 当 mode='custom' 时，指定要进行的阶段列表，如 ['recog', 'spell']
+// wordIds: 当从词库管理指定单词复习时，传入单词ID列表
+const startReview = async (mode, phases = [], wordIds = []) => {
   loading.value = true
   try {
-    const res = await api.get('/review/generate')
+    let res
+    if (wordIds.length > 0) {
+      // 指定单词ID复习
+      res = await api.get('/review/generate-by-ids', { params: { ids: wordIds.join(',') } })
+    } else {
+      // 智能选词
+      res = await api.get('/review/generate')
+    }
     if (!res || res.length === 0) {
       ElMessage.info('暂无需要复习的单词，请先导入词库')
       loading.value = false
@@ -537,9 +600,34 @@ const startReview = async (mode) => {
     originalList.value = res
     currentIndex.value = 0
     reviewMode.value = mode
+    customPhases.value = phases
 
     // 根据模式设置初始阶段
-    if (mode === 'spell') {
+    if (mode === 'custom') {
+      // 自定义模式：按 phases 列表顺序执行
+      const firstPhase = phases[0]
+      if (firstPhase === 'spell') {
+        phase.value = 'spell'
+        activeList.value = res.filter(w => !w.recogOnly)
+        if (activeList.value.length === 0) {
+          ElMessage.info('所有单词均为仅认读，无需默写')
+          loading.value = false
+          return
+        }
+      } else if (firstPhase === 'practice') {
+        activeList.value = res.filter(w => !w.recogOnly)
+        if (activeList.value.length === 0) {
+          ElMessage.info('所有单词均为仅认读，无需拼写练习')
+          loading.value = false
+          return
+        }
+        phase.value = 'practice'
+      } else {
+        // recog
+        phase.value = 'recog'
+        activeList.value = [...res]
+      }
+    } else if (mode === 'spell') {
       phase.value = 'spell'
       // 仅默写模式：过滤掉仅认读的词
       activeList.value = res.filter(w => !w.recogOnly)
@@ -581,11 +669,11 @@ const startReview = async (mode) => {
     autoPlayOnWordChange(res[0]?.word)
 
     // 拼写练习或默写模式自动聚焦输入框
-    if (mode === 'practice') {
+    if (phase.value === 'practice') {
       nextTick(() => {
         practiceInputRef.value?.focus()
       })
-    } else if (mode === 'spell') {
+    } else if (phase.value === 'spell') {
       nextTick(() => {
         spellInputRef.value?.focus()
       })
@@ -633,6 +721,9 @@ const recogNext = () => {
     if (reviewMode.value === 'recog') {
       // 仅认读模式，直接结束
       showResult.value = true
+    } else if (reviewMode.value === 'custom') {
+      // 自定义模式，进入下一个阶段
+      goToNextPhase('recog')
     } else {
       // 完整模式，进入拼写练习阶段
       enterPracticePhase()
@@ -726,6 +817,9 @@ const practiceNext = () => {
     if (reviewMode.value === 'practice') {
       // 仅拼写练习模式，直接结束
       showResult.value = true
+    } else if (reviewMode.value === 'custom') {
+      // 自定义模式，进入下一个阶段
+      goToNextPhase('practice')
     } else {
       // 完整模式，进入默写阶段
       enterSpellPhase()
@@ -894,12 +988,37 @@ const quitReview = async () => {
 const resetReview = () => {
   showResult.value = false
   reviewing.value = false
+  // 自定义模式（从词库管理跳转）重置时回到欢迎界面，不再自动开始
+  if (reviewMode.value === 'custom') {
+    // 清除 URL 中的 query 参数
+    router.replace({ path: '/review' })
+    return
+  }
   startReview(reviewMode.value)
 }
 
 onMounted(() => {
   loadConfig()
   document.addEventListener('keydown', handleKeydown)
+
+  // 检查是否从词库管理跳转过来，带有指定单词ID和阶段
+  const queryIds = route.query.ids
+  const queryPhases = route.query.phases
+  if (queryIds && queryPhases) {
+    const ids = String(queryIds).split(',').map(Number).filter(n => !isNaN(n))
+    const phases = String(queryPhases).split(',').filter(p => ['recog', 'practice', 'spell'].includes(p))
+    if (ids.length > 0 && phases.length > 0) {
+      // 确定模式：如果只选了一个阶段，用单阶段模式；否则用自定义模式
+      if (phases.length === 1) {
+        startReview(phases[0], phases, ids)
+      } else if (phases.length === 3 && phases[0] === 'recog' && phases[1] === 'practice' && phases[2] === 'spell') {
+        // 全选 = 完整复习
+        startReview('both', phases, ids)
+      } else {
+        startReview('custom', phases, ids)
+      }
+    }
+  }
 })
 
 onUnmounted(() => {

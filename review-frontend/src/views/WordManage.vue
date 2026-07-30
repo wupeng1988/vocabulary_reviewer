@@ -3,7 +3,7 @@
     <!-- 搜索栏 - sticky 固定顶部 -->
     <el-card class="sticky-search">
       <el-row :gutter="20" align="middle">
-        <el-col :span="8">
+        <el-col :span="6">
           <el-input
             v-model="keyword"
             placeholder="搜索生词或含义..."
@@ -16,7 +16,7 @@
             </template>
           </el-input>
         </el-col>
-        <el-col :span="4">
+        <el-col :span="6">
           <el-button type="primary" @click="loadWords">搜索</el-button>
           <el-button
             :type="batchRunning ? 'warning' : 'success'"
@@ -24,6 +24,13 @@
             @click="triggerBatchGeneration"
           >
             {{ batchRunning ? '音频生成中...' : '🔊 生成音频' }}
+          </el-button>
+          <el-button
+            type="primary"
+            :disabled="selectedWords.length === 0"
+            @click="openReviewDialog"
+          >
+            📖 复习 ({{ selectedWords.length }})
           </el-button>
         </el-col>
         <el-col :span="12" style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 10px">
@@ -40,7 +47,8 @@
 
     <!-- 词库表格 -->
     <el-card>
-      <el-table :data="words" stripe border style="width: 100%">
+      <el-table ref="wordTableRef" :data="words" stripe border style="width: 100%" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="50" align="center" />
         <el-table-column prop="id" label="ID" width="70" align="center" />
         <el-table-column prop="word" label="生词" width="150" />
         <el-table-column prop="phonetic" label="音标" width="180" />
@@ -126,6 +134,31 @@
         <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 复习阶段选择弹窗 -->
+    <el-dialog v-model="showReviewDialog" title="📖 选择复习阶段" width="360px" :close-on-click-modal="false">
+      <div style="padding: 10px 0">
+        <p style="margin-bottom: 16px; color: #606266">已选择 <strong>{{ selectedWords.length }}</strong> 个单词，请选择复习阶段：</p>
+        <div style="display: flex; flex-direction: column; gap: 16px">
+          <el-checkbox v-model="reviewPhases.recog" size="large" border style="padding: 12px 16px">
+            <span style="font-size: 16px">📖 认读</span>
+            <span style="color: #909399; margin-left: 8px; font-size: 13px">英→中，看词识义</span>
+          </el-checkbox>
+          <el-checkbox v-model="reviewPhases.practice" size="large" border style="padding: 12px 16px">
+            <span style="font-size: 16px">✏️ 拼写练习</span>
+            <span style="color: #909399; margin-left: 8px; font-size: 13px">显示信息+拼写</span>
+          </el-checkbox>
+          <el-checkbox v-model="reviewPhases.spell" size="large" border style="padding: 12px 16px">
+            <span style="font-size: 16px">✍️ 默写</span>
+            <span style="color: #909399; margin-left: 8px; font-size: 13px">中→英，看义写词</span>
+          </el-checkbox>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showReviewDialog = false">取消</el-button>
+        <el-button type="primary" @click="startSelectedReview">开始复习</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -133,8 +166,10 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import api from '../api'
 
+const router = useRouter()
 const words = ref([])
 const keyword = ref('')
 const currentPage = ref(1)
@@ -144,6 +179,42 @@ const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
 const batchRunning = ref(false)
 const batchChecking = ref(false)
+
+// 表格多选
+const wordTableRef = ref(null)
+const selectedWords = ref([])
+
+const handleSelectionChange = (selection) => {
+  selectedWords.value = selection
+}
+
+// 复习弹窗
+const showReviewDialog = ref(false)
+const reviewPhases = ref({ recog: true, practice: true, spell: true })
+
+const openReviewDialog = () => {
+  if (selectedWords.value.length === 0) {
+    ElMessage.warning('请先选择要复习的单词')
+    return
+  }
+  // 重置为全部选中
+  reviewPhases.value = { recog: true, practice: true, spell: true }
+  showReviewDialog.value = true
+}
+
+const startSelectedReview = () => {
+  const phases = []
+  if (reviewPhases.value.recog) phases.push('recog')
+  if (reviewPhases.value.practice) phases.push('practice')
+  if (reviewPhases.value.spell) phases.push('spell')
+  if (phases.length === 0) {
+    ElMessage.warning('请至少选择一个复习阶段')
+    return
+  }
+  const ids = selectedWords.value.map(w => w.id).join(',')
+  showReviewDialog.value = false
+  router.push({ path: '/review', query: { ids, phases: phases.join(',') } })
+}
 
 // 轮询批量生成状态
 let batchPollTimer = null

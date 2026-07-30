@@ -36,6 +36,9 @@ public interface WordRepository extends JpaRepository<Word, Long> {
     @Query("SELECT COUNT(w) FROM Word w WHERE w.lastReviewDate IS NULL OR w.lastReviewDate < :cutoff")
     long countOverdueOrNew(@Param("cutoff") LocalDateTime cutoff);
 
+    /** 根据ID列表查询单词 */
+    List<Word> findByIdIn(List<Long> ids);
+
     /** 易错词 Top N：按错误率降序 */
     @Query("SELECT w FROM Word w WHERE (w.recogWrong + w.spellWrong) > 0 ORDER BY (w.recogWrong + w.spellWrong) * 1.0 / (w.reviewTotal + 1) DESC")
     List<Word> findTopErrorProne(Pageable pageable);

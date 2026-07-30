@@ -55,6 +55,16 @@ public class ReviewService {
     }
 
     /**
+     * 根据指定单词ID生成复习列表
+     */
+    public List<Word> generateReviewListByIds(List<Long> ids) {
+        List<Word> words = wordRepository.findByIdIn(ids);
+        // 保持传入的ID顺序
+        Map<Long, Word> wordMap = words.stream().collect(Collectors.toMap(Word::getId, w -> w));
+        return ids.stream().map(wordMap::get).filter(Objects::nonNull).collect(Collectors.toList());
+    }
+
+    /**
      * 核心：生成本次复习列表
      * 严格执行三级筛选 + 随机扰动机制
      */
