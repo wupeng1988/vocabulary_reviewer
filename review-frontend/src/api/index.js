@@ -29,4 +29,13 @@ export function exportData() {
   })
 }
 
+/**
+ * 导出全部单词为 Excel 文件（需要 blob 响应，绕过响应拦截器）
+ */
+export function exportExcel() {
+  return axios.get('/api/words/export-excel', {
+    responseType: 'blob'
+  })
+}
+
 export default api

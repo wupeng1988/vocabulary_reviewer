@@ -140,17 +140,21 @@
       <div style="padding: 10px 0">
         <p style="margin-bottom: 16px; color: #606266">已选择 <strong>{{ selectedWords.length }}</strong> 个单词，请选择复习阶段：</p>
         <div style="display: flex; flex-direction: column; gap: 16px">
-          <el-checkbox v-model="reviewPhases.recog" size="large" border style="padding: 12px 16px">
+          <el-checkbox v-model="reviewPhases.recog" size="large" border style="padding: 12px 16px; width: 298px">
             <span style="font-size: 16px">📖 认读</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">英→中，看词识义</span>
           </el-checkbox>
-          <el-checkbox v-model="reviewPhases.practice" size="large" border style="padding: 12px 16px">
+          <el-checkbox v-model="reviewPhases.practice" size="large" border style="padding: 12px 16px; width: 298px">
             <span style="font-size: 16px">✏️ 拼写练习</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">显示信息+拼写</span>
           </el-checkbox>
-          <el-checkbox v-model="reviewPhases.spell" size="large" border style="padding: 12px 16px">
+          <el-checkbox v-model="reviewPhases.spell" size="large" border style="padding: 12px 16px; width: 298px">
             <span style="font-size: 16px">✍️ 默写</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">中→英，看义写词</span>
+          </el-checkbox>
+          <el-checkbox v-model="reviewPhases.dictation" size="large" border style="padding: 12px 16px; width: 298px">
+            <span style="font-size: 16px">🎧 听音默写</span>
+            <span style="color: #909399; margin-left: 8px; font-size: 13px">仅凭音频拼写</span>
           </el-checkbox>
         </div>
       </div>
@@ -173,7 +177,7 @@ const router = useRouter()
 const words = ref([])
 const keyword = ref('')
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(50)
 const totalElements = ref(0)
 const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
@@ -206,7 +210,7 @@ const handleSelectionChange = (selection) => {
 
 // 复习弹窗
 const showReviewDialog = ref(false)
-const reviewPhases = ref({ recog: true, practice: true, spell: true })
+const reviewPhases = ref({ recog: true, practice: true, spell: true, dictation: true })
 
 const openReviewDialog = () => {
   if (selectedWords.value.length === 0) {
@@ -214,7 +218,7 @@ const openReviewDialog = () => {
     return
   }
   // 重置为全部选中
-  reviewPhases.value = { recog: true, practice: true, spell: true }
+  reviewPhases.value = { recog: true, practice: true, spell: true, dictation: true }
   showReviewDialog.value = true
 }
 
@@ -223,6 +227,7 @@ const startSelectedReview = () => {
   if (reviewPhases.value.recog) phases.push('recog')
   if (reviewPhases.value.practice) phases.push('practice')
   if (reviewPhases.value.spell) phases.push('spell')
+  if (reviewPhases.value.dictation) phases.push('dictation')
   if (phases.length === 0) {
     ElMessage.warning('请至少选择一个复习阶段')
     return

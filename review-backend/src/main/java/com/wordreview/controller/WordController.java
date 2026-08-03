@@ -16,11 +16,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+
+import org.apache.poi.ss.usermodel.*;
 
 @RestController
 @RequestMapping("/api/words")
@@ -118,6 +122,59 @@ public class WordController {
             Map<String, Object> result = new HashMap<>();
             result.put("success", false);
             result.put("message", "导出失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
+    /** 导出全部单词为 Excel 文件（A-E列：生词/音标/含义/例句/例句释义） */
+    @GetMapping("/export-excel")
+    public ResponseEntity<byte[]> exportExcel() {
+        try {
+            List<Word> words = wordRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
+
+            try (Workbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+
+                Sheet sheet = workbook.createSheet("词库");
+
+                // 标题行
+                Row headerRow = sheet.createRow(0);
+                String[] headers = {"生词", "音标", "含义", "例句", "例句释义"};
+                for (int i = 0; i < headers.length; i++) {
+                    Cell cell = headerRow.createCell(i);
+                    cell.setCellValue(headers[i]);
+                    CellStyle style = workbook.createCellStyle();
+                    Font font = workbook.createFont();
+                    font.setBold(true);
+                    style.setFont(font);
+                    cell.setCellStyle(style);
+                }
+
+                // 数据行
+                for (int i = 0; i < words.size(); i++) {
+                    Word w = words.get(i);
+                    Row row = sheet.createRow(i + 1);
+                    row.createCell(0).setCellValue(w.getWord() != null ? w.getWord() : "");
+                    row.createCell(1).setCellValue(w.getPhonetic() != null ? w.getPhonetic() : "");
+                    row.createCell(2).setCellValue(w.getMeaning() != null ? w.getMeaning() : "");
+                    row.createCell(3).setCellValue(w.getExampleSentence() != null ? w.getExampleSentence() : "");
+                    row.createCell(4).setCellValue(w.getExampleMeaning() != null ? w.getExampleMeaning() : "");
+                }
+
+                // 自动列宽
+                for (int i = 0; i < 5; i++) {
+                    sheet.autoSizeColumn(i);
+                }
+
+                workbook.write(out);
+                byte[] data = out.toByteArray();
+                String filename = URLEncoder.encode("词库.xlsx", StandardCharsets.UTF_8);
+                return ResponseEntity.ok()
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+                        .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                        .body(data);
+            }
+        } catch (Exception e) {
             return ResponseEntity.internalServerError().body(null);
         }
     }

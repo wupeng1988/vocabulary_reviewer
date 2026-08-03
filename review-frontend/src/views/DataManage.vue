@@ -24,6 +24,14 @@
           </div>
         </template>
       </el-upload>
+      <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ebeef5">
+        <el-button type="primary" @click="doExportExcel" :loading="excelExportLoading">
+          <el-icon style="margin-right: 4px"><download /></el-icon>导出为 Excel
+        </el-button>
+        <span style="color: #909399; font-size: 12px; margin-left: 8px">
+          将所有单词导出为 Excel 文件，A-E 列依次对应：生词、音标、含义、例句、例句释义
+        </span>
+      </div>
     </el-card>
 
     <!-- 数据备份：导出 / 导入 -->
@@ -69,10 +77,11 @@
 import { ref } from 'vue'
 import { UploadFilled, Download, Upload } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import api, { exportData as apiExport } from '../api'
+import api, { exportData as apiExport, exportExcel as apiExportExcel } from '../api'
 
 // ========== Excel 导入 ==========
 const uploadRef = ref(null)
+const excelExportLoading = ref(false)
 
 const beforeUpload = (file) => {
   const name = file.name
@@ -95,6 +104,33 @@ const handleUploadSuccess = (response) => {
 const handleUploadError = () => {
   ElMessage.error('上传失败，请检查文件格式')
   uploadRef.value?.clearFiles()
+}
+
+// ========== 导出 Excel ==========
+const doExportExcel = async () => {
+  excelExportLoading.value = true
+  try {
+    const response = await apiExportExcel()
+    const contentDisposition = response.headers['content-disposition'] || ''
+    let filename = '词库.xlsx'
+    const match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
+    if (match) {
+      filename = decodeURIComponent(match[1])
+    }
+    const url = window.URL.createObjectURL(new Blob([response.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.setAttribute('download', filename)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('Excel 导出成功')
+  } catch (e) {
+    ElMessage.error('导出失败')
+  } finally {
+    excelExportLoading.value = false
+  }
 }
 
 // ========== 数据备份：导出 / 导入 ==========

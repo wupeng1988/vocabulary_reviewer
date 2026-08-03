@@ -21,6 +21,9 @@
           <el-button type="success" size="large" @click="startReview('spell')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px">
             ✍️ 仅默写复习
           </el-button>
+          <el-button size="large" @click="startReview('dictation')" :loading="loading" style="font-size: 18px; padding: 12px 40px; width: 260px; background-color: #9b59b6; border-color: #9b59b6; color: white">
+            🎧 仅听音默写
+          </el-button>
         </div>
         <div style="margin-top: 20px">
           <el-button link @click="showConfigDialog = true">
@@ -249,6 +252,72 @@
             </div>
           </template>
 
+          <!-- 听音默写模式 -->
+          <template v-if="phase === 'dictation'">
+            <div style="margin-bottom: 30px">
+              <el-button size="large" @click="playWordAudio(currentWord.word)" style="font-size: 24px; padding: 16px 32px">
+                🔊 播放发音
+              </el-button>
+              <div style="font-size: 16px; color: #909399; margin-top: 12px">请根据发音拼写单词</div>
+            </div>
+
+            <!-- 仅认读标记 -->
+            <div style="margin-bottom: 10px">
+              <el-switch
+                v-model="currentWord.recogOnly"
+                active-text="仅认读"
+                inactive-text=""
+                size="small"
+                @change="toggleRecogOnly(currentWord)"
+              />
+            </div>
+
+            <div style="margin-top: 30px">
+              <el-input
+                ref="dictationInputRef"
+                v-model="dictationInput"
+                :class="{ 'spell-wrong': dictationShowWrong }"
+                size="large"
+                placeholder="请根据发音输入单词..."
+                style="font-size: 20px; max-width: 400px"
+                @keyup.enter="checkDictation"
+                @keydown.delete="onDictationDelete"
+              />
+            </div>
+
+            <!-- 拼写结果反馈 -->
+            <transition name="fade">
+              <div v-if="dictationFeedback" style="margin-top: 20px">
+                <el-tag v-if="dictationFeedback === 'correct'" type="success" size="large" style="font-size: 16px">
+                  ✅ 正确！
+                </el-tag>
+                <div v-if="dictationFeedback === 'wrong'">
+                  <el-tag type="danger" size="large" style="font-size: 16px; margin-bottom: 10px">
+                    ❌ 错误，请重新输入
+                  </el-tag>
+                  <div style="margin-top: 12px; padding: 16px; background: #f5f7fa; border-radius: 8px; text-align: left; display: inline-block; min-width: 300px">
+                    <div style="font-size: 22px; font-weight: bold; margin-bottom: 6px; color: #E6A23C">{{ currentWord.word }}</div>
+                    <div style="font-size: 16px; color: #909399; margin-bottom: 8px">{{ currentWord.phonetic || '' }}</div>
+                    <div style="font-size: 18px; margin-bottom: 8px">{{ currentWord.meaning }}</div>
+                    <div style="font-size: 16px; color: #606266; margin-bottom: 4px">{{ currentWord.exampleSentence }}</div>
+                    <div style="font-size: 16px; color: #909399">{{ currentWord.exampleMeaning }}</div>
+                  </div>
+                </div>
+              </div>
+            </transition>
+
+            <div style="margin-top: 30px">
+              <el-button
+                type="primary"
+                size="large"
+                style="font-size: 18px; padding: 12px 30px"
+                @click="checkDictation"
+              >
+                确认拼写
+              </el-button>
+            </div>
+          </template>
+
         </div>
       </el-card>
     </div>
@@ -327,7 +396,7 @@ const originalList = ref([])
 const activeList = ref([])
 
 const currentIndex = ref(0)
-// phase: 'recog' | 'practice' | 'spell'
+// phase: 'recog' | 'practice' | 'spell' | 'dictation'
 const phase = ref('recog')
 
 // 认读阶段
@@ -345,6 +414,12 @@ const spellInput = ref('')
 const spellFeedback = ref('') // '' | 'correct' | 'wrong'
 const spellShowWrong = ref(false)
 const spellInputRef = ref(null)
+
+// 听音默写阶段
+const dictationInput = ref('')
+const dictationFeedback = ref('') // '' | 'correct' | 'wrong'
+const dictationShowWrong = ref(false)
+const dictationInputRef = ref(null)
 
 // 卡片区域 ref（用于键盘监听聚焦）
 const cardAreaRef = ref(null)
@@ -372,6 +447,10 @@ const recogOnlyCount = computed(() => originalList.value.filter(w => w.recogOnly
 const phaseLabel = computed(() => {
   if (phase.value === 'recog') return '📖 认读模式'
   if (phase.value === 'practice') return '✏️ 拼写练习'
+  if (phase.value === 'dictation') {
+    if (spellRound.value === 1) return '🎧 听音默写'
+    return `🎧 听音默写第 ${spellRound.value} 轮`
+  }
   if (spellRound.value === 1) return '✍️ 默写模式'
   return `✍️ 默写第 ${spellRound.value} 轮`
 })
@@ -379,12 +458,14 @@ const phaseLabel = computed(() => {
 const phaseTagType = computed(() => {
   if (phase.value === 'recog') return 'primary'
   if (phase.value === 'practice') return 'warning'
+  if (phase.value === 'dictation') return ''
   return 'success'
 })
 
 const phaseProgressColor = computed(() => {
   if (phase.value === 'recog') return '#409EFF'
   if (phase.value === 'practice') return '#E6A23C'
+  if (phase.value === 'dictation') return '#9b59b6'
   return '#67C23A'
 })
 
@@ -420,8 +501,8 @@ const hasPracticePhase = computed(() => {
 })
 
 const hasSpellPhase = computed(() => {
-  if (reviewMode.value === 'custom') return customPhases.value.includes('spell')
-  return reviewMode.value === 'spell' || reviewMode.value === 'both'
+  if (reviewMode.value === 'custom') return customPhases.value.includes('spell') || customPhases.value.includes('dictation')
+  return reviewMode.value === 'spell' || reviewMode.value === 'dictation' || reviewMode.value === 'both'
 })
 
 // ==================== 音频播放 ====================
@@ -497,8 +578,8 @@ const autoPlayOnWordChange = (word) => {
 // ==================== 键盘事件 ====================
 const handleKeydown = (e) => {
   if (!reviewing.value) return
-  // 拼写练习和默写模式下输入框有焦点时不拦截
-  if (phase.value === 'practice' || phase.value === 'spell') return
+  // 拼写练习、默写和听音默写模式下输入框有焦点时不拦截
+  if (phase.value === 'practice' || phase.value === 'spell' || phase.value === 'dictation') return
 
   if (phase.value === 'recog') {
     if (e.key === 'ArrowLeft') {
@@ -544,6 +625,8 @@ const goToNextPhase = (currentPhase) => {
     enterPracticePhase()
   } else if (nextPhase === 'spell') {
     enterSpellPhase()
+  } else if (nextPhase === 'dictation') {
+    enterDictationPhase()
   } else if (nextPhase === 'recog') {
     // 不太可能，但处理一下
     phase.value = 'recog'
@@ -578,7 +661,7 @@ const saveConfig = async () => {
   }
 }
 
-// 开始复习，mode: 'both' | 'recog' | 'practice' | 'spell' | 'custom'
+// 开始复习，mode: 'both' | 'recog' | 'practice' | 'spell' | 'dictation' | 'custom'
 // customPhases: 当 mode='custom' 时，指定要进行的阶段列表，如 ['recog', 'spell']
 // wordIds: 当从词库管理指定单词复习时，传入单词ID列表
 const startReview = async (mode, phases = [], wordIds = []) => {
@@ -614,6 +697,14 @@ const startReview = async (mode, phases = [], wordIds = []) => {
           loading.value = false
           return
         }
+      } else if (firstPhase === 'dictation') {
+        activeList.value = res.filter(w => !w.recogOnly)
+        if (activeList.value.length === 0) {
+          ElMessage.info('所有单词均为仅认读，无需听音默写')
+          loading.value = false
+          return
+        }
+        phase.value = 'dictation'
       } else if (firstPhase === 'practice') {
         activeList.value = res.filter(w => !w.recogOnly)
         if (activeList.value.length === 0) {
@@ -645,6 +736,15 @@ const startReview = async (mode, phases = [], wordIds = []) => {
         return
       }
       phase.value = 'practice'
+    } else if (mode === 'dictation') {
+      // 仅听音默写模式：直接进入听音默写
+      activeList.value = res.filter(w => !w.recogOnly)
+      if (activeList.value.length === 0) {
+        ElMessage.info('所有单词均为仅认读，无需听音默写')
+        loading.value = false
+        return
+      }
+      phase.value = 'dictation'
     } else {
       phase.value = 'recog'
       activeList.value = [...res]
@@ -658,6 +758,9 @@ const startReview = async (mode, phases = [], wordIds = []) => {
     spellInput.value = ''
     spellFeedback.value = ''
     spellShowWrong.value = false
+    dictationInput.value = ''
+    dictationFeedback.value = ''
+    dictationShowWrong.value = false
     spellFirstResult.value = {}
     spellWrongInRound.value = []
     recogCorrectCount.value = 0
@@ -676,6 +779,10 @@ const startReview = async (mode, phases = [], wordIds = []) => {
     } else if (phase.value === 'spell') {
       nextTick(() => {
         spellInputRef.value?.focus()
+      })
+    } else if (phase.value === 'dictation') {
+      nextTick(() => {
+        dictationInputRef.value?.focus()
       })
     }
   } catch (e) {
@@ -948,12 +1055,125 @@ const startNextSpellRound = () => {
   spellInput.value = ''
   spellFeedback.value = ''
   spellShowWrong.value = false
+  dictationInput.value = ''
+  dictationFeedback.value = ''
+  dictationShowWrong.value = false
   spellWrongInRound.value = []
 
   ElMessage.info(`还有 ${activeList.value.length} 个单词需要重默，开始第 ${spellRound.value} 轮`)
   nextTick(() => {
-    spellInputRef.value?.focus()
+    if (phase.value === 'dictation') {
+      dictationInputRef.value?.focus()
+    } else {
+      spellInputRef.value?.focus()
+    }
   })
+}
+
+// ==================== 听音默写阶段 ====================
+
+const enterDictationPhase = () => {
+  phase.value = 'dictation'
+  // 过滤掉仅认读的词
+  activeList.value = originalList.value.filter(w => !w.recogOnly)
+  if (activeList.value.length === 0) {
+    // 没有需要听音默写的词，复习完成
+    showResult.value = true
+    return
+  }
+  currentIndex.value = 0
+  dictationInput.value = ''
+  dictationFeedback.value = ''
+  dictationShowWrong.value = false
+  spellRound.value = 1
+  spellWrongInRound.value = []
+  // 自动播放第一个词的音频
+  autoPlayOnWordChange(activeList.value[0]?.word)
+  nextTick(() => {
+    dictationInputRef.value?.focus()
+  })
+}
+
+// 听音默写输入框按删除键：如果当前显示着错误反馈，清空输入内容并隐藏正确答案
+const onDictationDelete = (e) => {
+  if (dictationFeedback.value === 'wrong') {
+    e.preventDefault()
+    dictationInput.value = ''
+    dictationFeedback.value = ''
+    dictationShowWrong.value = false
+  }
+}
+
+const checkDictation = async () => {
+  // 防重入：正确后等待自动跳转期间，忽略后续回车
+  if (dictationFeedback.value === 'correct') return
+  if (!dictationInput.value.trim()) {
+    ElMessage.warning('请输入单词')
+    return
+  }
+
+  const input = normalizeWord(dictationInput.value.trim())
+  const correct = normalizeWord(currentWord.value.word.trim())
+  const isCorrect = input === correct
+
+  // 上报后端
+  try {
+    await api.post('/review/record', {
+      wordId: currentWord.value.id,
+      mode: 'SPELL',
+      result: isCorrect
+    })
+  } catch (e) {
+    console.error('记录听音默写结果失败', e)
+  }
+
+  if (isCorrect) {
+    dictationFeedback.value = 'correct'
+    dictationShowWrong.value = false
+    // 只记录第一轮首次尝试结果，已有记录则不覆盖
+    if (spellRound.value === 1 && !(currentWord.value.id in spellFirstResult.value)) {
+      spellFirstResult.value[currentWord.value.id] = true
+    }
+    // 拼写完成后播放一次音频
+    playWordAudio(currentWord.value.word)
+    // 正确后 0.8 秒自动跳下一个
+    setTimeout(() => {
+      dictationNext()
+    }, 800)
+  } else {
+    // 错误：显示正确答案（不自动消失）
+    dictationFeedback.value = 'wrong'
+    dictationShowWrong.value = true
+    if (spellRound.value === 1) {
+      spellFirstResult.value[currentWord.value.id] = false
+    }
+    // 记录本轮错词
+    if (!spellWrongInRound.value.includes(currentWord.value.id)) {
+      spellWrongInRound.value.push(currentWord.value.id)
+    }
+    // 拼写完成后播放一次音频
+    playWordAudio(currentWord.value.word)
+    nextTick(() => {
+      dictationInputRef.value?.focus()
+    })
+  }
+}
+
+// 听音默写：正确后跳下一个
+const dictationNext = () => {
+  if (currentIndex.value < activeList.value.length - 1) {
+    currentIndex.value++
+    dictationInput.value = ''
+    dictationFeedback.value = ''
+    dictationShowWrong.value = false
+    autoPlayOnWordChange(currentWord.value.word)
+    nextTick(() => {
+      dictationInputRef.value?.focus()
+    })
+  } else {
+    // 本轮听音默写完成，检查是否有错词需要重默
+    startNextSpellRound()
+  }
 }
 
 // 切换仅认读标记
@@ -1006,12 +1226,12 @@ onMounted(() => {
   const queryPhases = route.query.phases
   if (queryIds && queryPhases) {
     const ids = String(queryIds).split(',').map(Number).filter(n => !isNaN(n))
-    const phases = String(queryPhases).split(',').filter(p => ['recog', 'practice', 'spell'].includes(p))
+    const phases = String(queryPhases).split(',').filter(p => ['recog', 'practice', 'spell', 'dictation'].includes(p))
     if (ids.length > 0 && phases.length > 0) {
       // 确定模式：如果只选了一个阶段，用单阶段模式；否则用自定义模式
       if (phases.length === 1) {
         startReview(phases[0], phases, ids)
-      } else if (phases.length === 3 && phases[0] === 'recog' && phases[1] === 'practice' && phases[2] === 'spell') {
+      } else if (phases.length === 4 && phases[0] === 'recog' && phases[1] === 'practice' && phases[2] === 'spell' && phases[3] === 'dictation') {
         // 全选 = 完整复习
         startReview('both', phases, ids)
       } else {
