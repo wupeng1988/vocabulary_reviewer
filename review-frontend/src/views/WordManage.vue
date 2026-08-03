@@ -47,9 +47,9 @@
 
     <!-- 词库表格 -->
     <el-card>
-      <el-table ref="wordTableRef" :data="words" stripe border style="width: 100%" @selection-change="handleSelectionChange">
+      <el-table ref="wordTableRef" :data="words" stripe border style="width: 100%" @selection-change="handleSelectionChange" @sort-change="handleSortChange">
         <el-table-column type="selection" width="50" align="center" />
-        <el-table-column prop="id" label="ID" width="70" align="center" />
+        <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom" />
         <el-table-column prop="word" label="生词" width="150" />
         <el-table-column prop="phonetic" label="音标" width="180" />
         <el-table-column prop="meaning" label="含义" min-width="200" show-overflow-tooltip>
@@ -180,6 +180,22 @@ const hideExampleMeaning = ref(false)
 const batchRunning = ref(false)
 const batchChecking = ref(false)
 
+// 排序状态
+const sortField = ref('id')
+const sortOrder = ref('desc')
+
+const handleSortChange = ({ prop, order }) => {
+  if (prop && order) {
+    sortField.value = prop
+    sortOrder.value = order === 'ascending' ? 'asc' : 'desc'
+  } else {
+    // 取消排序时恢复默认
+    sortField.value = 'id'
+    sortOrder.value = 'desc'
+  }
+  loadWords()
+}
+
 // 表格多选
 const wordTableRef = ref(null)
 const selectedWords = ref([])
@@ -286,7 +302,9 @@ const loadWords = async () => {
       params: {
         page: currentPage.value,
         size: pageSize.value,
-        keyword: keyword.value || undefined
+        keyword: keyword.value || undefined,
+        sortField: sortField.value,
+        sortOrder: sortOrder.value
       }
     })
     words.value = res.content

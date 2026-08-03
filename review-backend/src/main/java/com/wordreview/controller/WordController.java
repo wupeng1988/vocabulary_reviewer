@@ -62,10 +62,13 @@ public class WordController {
     public ResponseEntity<WordPageResponse> getPage(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "id") String sortField,
+            @RequestParam(defaultValue = "desc") String sortOrder) {
 
         // 前端页码从1开始，JPA从0开始
-        PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(Sort.Direction.DESC, "id"));
+        Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(direction, sortField));
         Page<Word> wordPage;
 
         if (keyword != null && !keyword.trim().isEmpty()) {
