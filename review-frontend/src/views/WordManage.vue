@@ -3,7 +3,7 @@
     <!-- 搜索栏 - sticky 固定顶部 -->
     <el-card class="sticky-search">
       <el-row :gutter="20" align="middle">
-        <el-col :span="6">
+        <el-col :span="5">
           <el-input
             v-model="keyword"
             placeholder="搜索生词或含义..."
@@ -16,9 +16,11 @@
             </template>
           </el-input>
         </el-col>
-        <el-col :span="6">
-          <el-button type="primary" @click="loadWords">搜索</el-button>
+        <el-col :span="7">
+          <el-button size="small" type="primary" @click="loadWords">搜索</el-button>
+          <el-button size="small" type="success" @click="openAddDialog">➕ 新增</el-button>
           <el-button
+            size="small"
             :type="batchRunning ? 'warning' : 'success'"
             :loading="batchChecking"
             @click="triggerBatchGeneration"
@@ -26,6 +28,7 @@
             {{ batchRunning ? '音频生成中...' : '🔊 生成音频' }}
           </el-button>
           <el-button
+            size="small"
             type="primary"
             :disabled="selectedWords.length === 0"
             @click="openReviewDialog"
@@ -132,6 +135,31 @@
       <template #footer>
         <el-button @click="showEditDialog = false">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新增弹窗 -->
+    <el-dialog v-model="showAddDialog" title="新增单词" width="550px" :close-on-click-modal="false">
+      <el-form :model="addForm" label-width="90px">
+        <el-form-item label="生词" required>
+          <el-input v-model="addForm.word" placeholder="英文单词" />
+        </el-form-item>
+        <el-form-item label="音标">
+          <el-input v-model="addForm.phonetic" placeholder="/ˈeksəmpəl/" />
+        </el-form-item>
+        <el-form-item label="含义" required>
+          <el-input v-model="addForm.meaning" type="textarea" :rows="2" placeholder="中文含义" />
+        </el-form-item>
+        <el-form-item label="例句">
+          <el-input v-model="addForm.exampleSentence" type="textarea" :rows="2" placeholder="英文例句" />
+        </el-form-item>
+        <el-form-item label="例句释义">
+          <el-input v-model="addForm.exampleMeaning" type="textarea" :rows="2" placeholder="例句的中文翻译" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddDialog = false">取消</el-button>
+        <el-button type="primary" :loading="addSaving" @click="saveAdd">添加</el-button>
       </template>
     </el-dialog>
 
@@ -390,6 +418,56 @@ const saveEdit = async () => {
     ElMessage.error(msg)
   }
   editSaving.value = false
+}
+
+// ==================== 新增 ====================
+const showAddDialog = ref(false)
+const addSaving = ref(false)
+const addForm = ref({
+  word: '',
+  phonetic: '',
+  meaning: '',
+  exampleSentence: '',
+  exampleMeaning: ''
+})
+
+const openAddDialog = () => {
+  addForm.value = {
+    word: '',
+    phonetic: '',
+    meaning: '',
+    exampleSentence: '',
+    exampleMeaning: ''
+  }
+  showAddDialog.value = true
+}
+
+const saveAdd = async () => {
+  if (!addForm.value.word.trim()) {
+    ElMessage.warning('生词不能为空')
+    return
+  }
+  if (!addForm.value.meaning.trim()) {
+    ElMessage.warning('含义不能为空')
+    return
+  }
+  addSaving.value = true
+  try {
+    await api.post('/words/add', {
+      word: addForm.value.word,
+      phonetic: addForm.value.phonetic,
+      meaning: addForm.value.meaning,
+      exampleSentence: addForm.value.exampleSentence,
+      exampleMeaning: addForm.value.exampleMeaning
+    })
+    ElMessage.success('添加成功')
+    showAddDialog.value = false
+    loadWords()
+  } catch (e) {
+    const msg = e?.response?.data?.message || '添加失败'
+    ElMessage.error(msg)
+  }
+  addSaving.value = false
 }
 
 onMounted(() => {

@@ -204,6 +204,42 @@ public class WordController {
         }
     }
 
+    /** 新增单词 */
+    @PostMapping("/add")
+    public ResponseEntity<Map<String, Object>> addWord(@RequestBody Map<String, String> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String wordText = body.get("word");
+            if (wordText == null || wordText.trim().isEmpty()) {
+                result.put("success", false);
+                result.put("message", "生词不能为空");
+                return ResponseEntity.badRequest().body(result);
+            }
+            // 检查是否已存在
+            if (wordRepository.findByWord(wordText.trim()).isPresent()) {
+                result.put("success", false);
+                result.put("message", "单词 '" + wordText.trim() + "' 已存在");
+                return ResponseEntity.badRequest().body(result);
+            }
+            Word word = new Word();
+            word.setWord(wordText.trim());
+            if (body.containsKey("phonetic")) word.setPhonetic(body.get("phonetic"));
+            if (body.containsKey("meaning")) word.setMeaning(body.get("meaning"));
+            if (body.containsKey("exampleSentence")) word.setExampleSentence(body.get("exampleSentence"));
+            if (body.containsKey("exampleMeaning")) word.setExampleMeaning(body.get("exampleMeaning"));
+            wordRepository.save(word);
+            // 异步生成音频
+            audioGenerationTaskService.triggerGeneration(wordText.trim());
+            result.put("success", true);
+            result.put("message", "添加成功");
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "添加失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
+        }
+    }
+
     /** 删除单个单词 */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteWord(@PathVariable Long id) {
