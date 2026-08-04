@@ -1043,8 +1043,12 @@ const spellNext = () => {
 const startNextSpellRound = () => {
   const wrongWords = spellWrongInRound.value
   if (wrongWords.length === 0) {
-    // 全部正确，复习完成
-    showResult.value = true
+    // 全部正确，检查是否还有下一个自定义阶段
+    if (reviewMode.value === 'custom' && phase.value !== 'dictation') {
+      goToNextPhase(phase.value)
+    } else {
+      showResult.value = true
+    }
     return
   }
 
@@ -1228,13 +1232,14 @@ onMounted(() => {
     const ids = String(queryIds).split(',').map(Number).filter(n => !isNaN(n))
     const phases = String(queryPhases).split(',').filter(p => ['recog', 'practice', 'spell', 'dictation'].includes(p))
     if (ids.length > 0 && phases.length > 0) {
-      // 确定模式：如果只选了一个阶段，用单阶段模式；否则用自定义模式
+      // 确定模式：如果只选了一个阶段，用单阶段模式；recog+practice+spell 三阶段用 both；其他组合用 custom
       if (phases.length === 1) {
         startReview(phases[0], phases, ids)
-      } else if (phases.length === 4 && phases[0] === 'recog' && phases[1] === 'practice' && phases[2] === 'spell' && phases[3] === 'dictation') {
-        // 全选 = 完整复习
+      } else if (phases.length === 3 && phases[0] === 'recog' && phases[1] === 'practice' && phases[2] === 'spell') {
+        // 经典三阶段 = 完整复习
         startReview('both', phases, ids)
       } else {
+        // 包含听音默写或其他组合，使用自定义模式
         startReview('custom', phases, ids)
       }
     }

@@ -44,7 +44,7 @@ public class EdgeTtsService {
     private static final String CHROMIUM_FULL_VERSION = "143.0.3650.75";
     private static final String CHROMIUM_MAJOR_VERSION = CHROMIUM_FULL_VERSION.split("\\.")[0];
     private static final String SEC_MS_GEC_VERSION = "1-" + CHROMIUM_FULL_VERSION;
-    private static final String DEFAULT_VOICE = "en-US-EmmaMultilingualNeural";
+    private static final String DEFAULT_VOICE = "en-US-JennyNeural";
 
     private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             + " (KHTML, like Gecko) Chrome/" + CHROMIUM_MAJOR_VERSION + ".0.0.0 Safari/537.36"
