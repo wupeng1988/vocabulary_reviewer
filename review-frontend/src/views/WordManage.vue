@@ -23,9 +23,9 @@
             size="small"
             :type="batchRunning ? 'warning' : 'success'"
             :loading="batchChecking"
-            @click="triggerBatchGeneration"
+            @click="handleAudioButton"
           >
-            {{ batchRunning ? '音频生成中...' : '🔊 生成音频' }}
+            {{ batchRunning ? '音频生成中...' : selectedWords.length > 0 ? '🔊 重新生成音频' : '🔊 生成音频' }}
           </el-button>
           <el-button
             size="small"
@@ -54,7 +54,14 @@
         <el-table-column type="selection" width="50" align="center" />
         <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom" />
         <el-table-column prop="word" label="生词" width="150" />
-        <el-table-column prop="phonetic" label="音标" width="180" />
+        <el-table-column prop="phonetic" label="音标" width="200">
+          <template #default="{ row }">
+            <el-button link size="small" @click="playWordAudio(row.word)" style="margin-right: 4px">
+              🔊
+            </el-button>
+            {{ row.phonetic }}
+          </template>
+        </el-table-column>
         <el-table-column prop="meaning" label="含义" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="!hideMeaning">{{ row.meaning }}</span>
@@ -329,6 +336,31 @@ const triggerBatchGeneration = async () => {
   batchChecking.value = false
 }
 
+// 音频按钮：有选中词则重新生成，否则批量生成缺失音频
+const handleAudioButton = () => {
+  if (selectedWords.value.length > 0) {
+    regenerateSelectedAudio()
+  } else {
+    triggerBatchGeneration()
+  }
+}
+
+const regenerateSelectedAudio = async () => {
+  const words = selectedWords.value.map(w => w.word)
+  batchChecking.value = true
+  try {
+    const res = await api.post('/audio/regenerate', { words })
+    if (res.success) {
+      ElMessage.success(res.message)
+    } else {
+      ElMessage.error(res.message || '重新生成失败')
+    }
+  } catch (e) {
+    ElMessage.error('重新生成音频失败')
+  }
+  batchChecking.value = false
+}
+
 const loadWords = async () => {
   try {
     const res = await api.get('/words/page', {
@@ -418,6 +450,42 @@ const saveEdit = async () => {
     ElMessage.error(msg)
   }
   editSaving.value = false
+}
+
+// ==================== 音频播放 ====================
+let currentAudio = null
+
+const playWordAudio = async (word) => {
+  if (!word) return
+  if (currentAudio) {
+    currentAudio.pause()
+    currentAudio = null
+  }
+  const audioUrl = `/api/audio/${word.trim().toLowerCase()}`
+  try {
+    const audio = new Audio(audioUrl)
+    currentAudio = audio
+    await audio.play()
+    return
+  } catch (e) {
+    currentAudio = null
+  }
+  // 轮询等待音频就绪
+  try {
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500))
+      const res = await fetch(`${audioUrl}/status`)
+      const data = await res.json()
+      if (data.status === 'ready') {
+        const audio = new Audio(audioUrl)
+        currentAudio = audio
+        await audio.play()
+        return
+      }
+    }
+  } catch (e) {
+    // 静默忽略
+  }
 }
 
 // ==================== 新增 ====================

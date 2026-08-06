@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -99,6 +100,32 @@ public class AudioController {
     public ResponseEntity<Map<String, Object>> getBatchStatus() {
         Map<String, Object> result = new HashMap<>();
         result.put("status", audioGenerationTaskService.isBatchRunning() ? "running" : "idle");
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 重新生成指定单词的音频（删除旧文件后重新生成）。
+     */
+    @PostMapping("/regenerate")
+    public ResponseEntity<Map<String, Object>> regenerateAudio(@RequestBody Map<String, List<String>> body) {
+        List<String> words = body.get("words");
+        if (words == null || words.isEmpty()) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "未指定单词");
+            return ResponseEntity.badRequest().body(result);
+        }
+
+        int count = 0;
+        for (String word : words) {
+            String normalizedWord = word.trim().toLowerCase();
+            count += audioGenerationTaskService.regenerateAudio(normalizedWord) ? 1 : 0;
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("count", count);
+        result.put("message", "已触发 " + count + " 个单词的音频重新生成");
         return ResponseEntity.ok(result);
     }
 

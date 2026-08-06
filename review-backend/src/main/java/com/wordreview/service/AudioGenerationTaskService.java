@@ -116,6 +116,37 @@ public class AudioGenerationTaskService {
     }
 
     /**
+     * 重新生成单个单词的音频：删除旧文件后异步生成新文件。
+     * @return true 如果成功触发重新生成
+     */
+    public boolean regenerateAudio(String word) {
+        String normalizedWord = word.trim().toLowerCase();
+        Path audioPath = getAudioPath(normalizedWord);
+
+        // 删除旧音频
+        try {
+            Files.deleteIfExists(audioPath);
+        } catch (Exception e) {
+            log.error("删除旧音频失败: {}", normalizedWord, e);
+            return false;
+        }
+
+        // 触发生成（不检查是否已存在，因为刚删了）
+        generatingMap.computeIfAbsent(normalizedWord, w -> {
+            log.info("重新生成音频: {}", w);
+            CompletableFuture<Void> future = edgeTtsService.generateAudioAsync(w, audioPath);
+            future.whenComplete((v, ex) -> {
+                generatingMap.remove(w);
+                if (ex != null) {
+                    log.error("音频重新生成失败: {}", w, ex);
+                }
+            });
+            return future;
+        });
+        return true;
+    }
+
+    /**
      * 启动批量音频生成任务（异步，不阻塞调用方）。
      * 扫描数据库中所有生词，对缺少音频的依次生成，间隔 1s + 随机(1-2)s。
      * 如果已有批量任务在运行，则跳过。
