@@ -75,7 +75,7 @@
             <span v-else style="color: #c0c4cc">***</span>
           </template>
         </el-table-column>
-        <el-table-column label="复习次数" width="90" align="center">
+        <el-table-column prop="reviewTotal" label="复习次数" width="110" align="center" sortable="custom">
           <template #default="{ row }">{{ row.reviewTotal }}</template>
         </el-table-column>
         <el-table-column label="状态" width="80" align="center">
