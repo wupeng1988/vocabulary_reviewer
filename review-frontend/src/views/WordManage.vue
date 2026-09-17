@@ -221,7 +221,7 @@ const batchChecking = ref(false)
 
 // 排序状态
 const sortField = ref('id')
-const sortOrder = ref('desc')
+const sortOrder = ref('asc')
 
 const handleSortChange = ({ prop, order }) => {
   if (prop && order) {
@@ -230,7 +230,7 @@ const handleSortChange = ({ prop, order }) => {
   } else {
     // 取消排序时恢复默认
     sortField.value = 'id'
-    sortOrder.value = 'desc'
+    sortOrder.value = 'asc'
   }
   loadWords()
 }

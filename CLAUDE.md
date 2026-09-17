@@ -124,4 +124,4 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - 词库管理页面支持编辑单词（生词、音标、含义、例句、例句释义），修改生词时后端检测重名冲突
 - 词库管理表格支持 ID 列服务端排序（sortable="custom"，sortField/sortOrder 参数传后端）
 - 词库管理表格左侧有复选框，选中后可点击复习按钮自定义阶段复习
-- 分页查询接口支持 sortField（默认 id）和 sortOrder（默认 desc）参数
+- 分页查询接口支持 sortField（默认 id）和 sortOrder（默认 asc）参数

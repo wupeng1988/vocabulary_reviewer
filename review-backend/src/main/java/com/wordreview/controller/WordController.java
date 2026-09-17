@@ -68,7 +68,7 @@ public class WordController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "id") String sortField,
-            @RequestParam(defaultValue = "desc") String sortOrder) {
+            @RequestParam(defaultValue = "asc") String sortOrder) {
 
         // 前端页码从1开始，JPA从0开始
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
