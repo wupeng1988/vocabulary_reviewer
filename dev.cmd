@@ -1,3 +1,5 @@
+:: Java安装目录 ，目前是根据我自己的电脑环境变量设置的，应该改成你自己的实际目录
+set "JAVA_HOME=D:\dev\jdk-17.0.19"
 @echo off
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
