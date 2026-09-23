@@ -1,11 +1,14 @@
 package com.wordreview.controller;
 
+import com.wordreview.dto.GroupNodeDTO;
 import com.wordreview.dto.WordPageResponse;
 import com.wordreview.entity.Word;
 import com.wordreview.repository.WordRepository;
 import com.wordreview.service.AudioGenerationTaskService;
 import com.wordreview.service.DataExportImportService;
+import com.wordreview.service.ExcelExportService;
 import com.wordreview.service.ExcelImportService;
+import com.wordreview.service.WordGroupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -16,15 +19,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
-
-import org.apache.poi.ss.usermodel.*;
 
 @RestController
 @RequestMapping("/api/words")
@@ -32,15 +30,19 @@ import org.apache.poi.ss.usermodel.*;
 public class WordController {
 
     private final ExcelImportService excelImportService;
+    private final ExcelExportService excelExportService;
     private final DataExportImportService dataExportImportService;
     private final WordRepository wordRepository;
+    private final WordGroupService wordGroupService;
     private final AudioGenerationTaskService audioGenerationTaskService;
 
-    /** 上传 Excel 并解析入库 */
+    /** 上传 Excel 并解析入库（groupId：导入到指定词组） */
     @PostMapping("/import")
-    public ResponseEntity<Map<String, Object>> importExcel(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<Map<String, Object>> importExcel(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "groupId", required = false) Long groupId) {
         try {
-            int count = excelImportService.importExcel(file);
+            int count = excelImportService.importExcel(file, groupId);
             // 导入完成后，异步生成缺失音频
             audioGenerationTaskService.startBatchGeneration();
             Map<String, Object> result = new HashMap<>();
@@ -61,54 +63,77 @@ public class WordController {
         }
     }
 
-    /** 分页查询词库 */
+    /** 分页查询词库（可选按词组筛选，含该词组的所有子孙词组） */
     @GetMapping("/page")
     public ResponseEntity<WordPageResponse> getPage(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "id") String sortField,
-            @RequestParam(defaultValue = "asc") String sortOrder) {
+            @RequestParam(defaultValue = "asc") String sortOrder,
+            @RequestParam(required = false) Long groupId) {
 
         // 前端页码从1开始，JPA从0开始
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
         PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(direction, sortField));
-        Page<Word> wordPage;
 
-        if (keyword != null && !keyword.trim().isEmpty()) {
-            wordPage = wordRepository.findByWordContainingOrMeaningContaining(
-                    keyword.trim(), keyword.trim(), pageRequest);
+        String trimmedKeyword = (keyword != null && !keyword.trim().isEmpty()) ? keyword.trim() : null;
+        List<Long> groupIds = groupId != null ? wordGroupService.getGroupAndDescendantIds(groupId) : null;
+
+        Page<Word> wordPage;
+        if (groupIds != null && groupIds.isEmpty()) {
+            // 筛选的词组无任何单词
+            wordPage = Page.empty(pageRequest);
+        } else if (groupIds != null && trimmedKeyword != null) {
+            wordPage = wordRepository.findByGroupIdsAndKeyword(groupIds, trimmedKeyword, pageRequest);
+        } else if (groupIds != null) {
+            wordPage = wordRepository.findByGroupIds(groupIds, pageRequest);
+        } else if (trimmedKeyword != null) {
+            wordPage = wordRepository.findByWordContainingOrMeaningContaining(trimmedKeyword, trimmedKeyword, pageRequest);
         } else {
             wordPage = wordRepository.findAll(pageRequest);
         }
 
+        List<WordPageResponse.WordItem> items = new ArrayList<>();
+        for (Word w : wordPage.getContent()) {
+            items.add(toWordItem(w));
+        }
+
+        // 一次性回填词组归属
+        Map<Long, List<GroupNodeDTO>> groupMap =
+                wordGroupService.getGroupsByWordIds(wordPage.getContent().stream().map(Word::getId).collect(Collectors.toList()));
+        for (WordPageResponse.WordItem item : items) {
+            item.setGroups(groupMap.getOrDefault(item.getId(), Collections.emptyList()));
+        }
+
         WordPageResponse response = new WordPageResponse();
-        response.setContent(wordPage.getContent().stream().map(w -> {
-            WordPageResponse.WordItem item = new WordPageResponse.WordItem();
-            item.setId(w.getId());
-            item.setWord(w.getWord());
-            item.setPhonetic(w.getPhonetic());
-            item.setMeaning(w.getMeaning());
-            item.setExampleSentence(w.getExampleSentence());
-            item.setExampleMeaning(w.getExampleMeaning());
-            item.setReviewTotal(w.getReviewTotal());
-            item.setRecogCorrect(w.getRecogCorrect());
-            item.setRecogWrong(w.getRecogWrong());
-            item.setSpellCorrect(w.getSpellCorrect());
-            item.setSpellWrong(w.getSpellWrong());
-            item.setIsDormant(w.getIsDormant());
-            item.setRecogOnly(w.getRecogOnly());
-            return item;
-        }).collect(Collectors.toList()));
+        response.setContent(items);
         response.setTotalElements(wordPage.getTotalElements());
         response.setTotalPages(wordPage.getTotalPages());
         response.setCurrentPage(page);
         response.setPageSize(size);
-
         return ResponseEntity.ok(response);
     }
 
-    /** 导出全部数据（含复习统计和配置）为 JSON 文件 */
+    private WordPageResponse.WordItem toWordItem(Word w) {
+        WordPageResponse.WordItem item = new WordPageResponse.WordItem();
+        item.setId(w.getId());
+        item.setWord(w.getWord());
+        item.setPhonetic(w.getPhonetic());
+        item.setMeaning(w.getMeaning());
+        item.setExampleSentence(w.getExampleSentence());
+        item.setExampleMeaning(w.getExampleMeaning());
+        item.setReviewTotal(w.getReviewTotal());
+        item.setRecogCorrect(w.getRecogCorrect());
+        item.setRecogWrong(w.getRecogWrong());
+        item.setSpellCorrect(w.getSpellCorrect());
+        item.setSpellWrong(w.getSpellWrong());
+        item.setIsDormant(w.getIsDormant());
+        item.setRecogOnly(w.getRecogOnly());
+        return item;
+    }
+
+    /** 导出全部数据（含复习统计、配置、词组关系）为 JSON 文件 */
     @GetMapping("/export")
     public ResponseEntity<byte[]> exportData() {
         try {
@@ -119,67 +144,26 @@ public class WordController {
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(data);
         } catch (Exception e) {
-            Map<String, Object> result = new HashMap<>();
-            result.put("success", false);
-            result.put("message", "导出失败: " + e.getMessage());
             return ResponseEntity.internalServerError().body(null);
         }
     }
 
-    /** 导出全部单词为 Excel 文件（A-E列：生词/音标/含义/例句/例句释义） */
+    /** 导出单词为 Excel：每个词组一个 Sheet */
     @GetMapping("/export-excel")
     public ResponseEntity<byte[]> exportExcel() {
         try {
-            List<Word> words = wordRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
-
-            try (Workbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
-                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-
-                Sheet sheet = workbook.createSheet("词库");
-
-                // 标题行
-                Row headerRow = sheet.createRow(0);
-                String[] headers = {"生词", "音标", "含义", "例句", "例句释义"};
-                for (int i = 0; i < headers.length; i++) {
-                    Cell cell = headerRow.createCell(i);
-                    cell.setCellValue(headers[i]);
-                    CellStyle style = workbook.createCellStyle();
-                    Font font = workbook.createFont();
-                    font.setBold(true);
-                    style.setFont(font);
-                    cell.setCellStyle(style);
-                }
-
-                // 数据行
-                for (int i = 0; i < words.size(); i++) {
-                    Word w = words.get(i);
-                    Row row = sheet.createRow(i + 1);
-                    row.createCell(0).setCellValue(w.getWord() != null ? w.getWord() : "");
-                    row.createCell(1).setCellValue(w.getPhonetic() != null ? w.getPhonetic() : "");
-                    row.createCell(2).setCellValue(w.getMeaning() != null ? w.getMeaning() : "");
-                    row.createCell(3).setCellValue(w.getExampleSentence() != null ? w.getExampleSentence() : "");
-                    row.createCell(4).setCellValue(w.getExampleMeaning() != null ? w.getExampleMeaning() : "");
-                }
-
-                // 自动列宽
-                for (int i = 0; i < 5; i++) {
-                    sheet.autoSizeColumn(i);
-                }
-
-                workbook.write(out);
-                byte[] data = out.toByteArray();
-                String filename = URLEncoder.encode("词库.xlsx", StandardCharsets.UTF_8);
-                return ResponseEntity.ok()
-                        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
-                        .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
-                        .body(data);
-            }
+            byte[] data = excelExportService.exportGroupedExcel();
+            String filename = URLEncoder.encode("词库.xlsx", StandardCharsets.UTF_8);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+                    .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(data);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(null);
         }
     }
 
-    /** 从 JSON 备份文件导入数据（含复习统计和配置） */
+    /** 从 JSON 备份文件导入数据（含复习统计、配置、词组关系） */
     @PostMapping("/import-data")
     public ResponseEntity<Map<String, Object>> importData(@RequestParam("file") MultipartFile file) {
         try {
@@ -204,12 +188,12 @@ public class WordController {
         }
     }
 
-    /** 新增单词 */
+    /** 新增单词（groupId 可选，默认归属到默认词组） */
     @PostMapping("/add")
-    public ResponseEntity<Map<String, Object>> addWord(@RequestBody Map<String, String> body) {
+    public ResponseEntity<Map<String, Object>> addWord(@RequestBody Map<String, Object> body) {
         Map<String, Object> result = new HashMap<>();
         try {
-            String wordText = body.get("word");
+            String wordText = (String) body.get("word");
             if (wordText == null || wordText.trim().isEmpty()) {
                 result.put("success", false);
                 result.put("message", "生词不能为空");
@@ -223,11 +207,21 @@ public class WordController {
             }
             Word word = new Word();
             word.setWord(wordText.trim());
-            if (body.containsKey("phonetic")) word.setPhonetic(body.get("phonetic"));
-            if (body.containsKey("meaning")) word.setMeaning(body.get("meaning"));
-            if (body.containsKey("exampleSentence")) word.setExampleSentence(body.get("exampleSentence"));
-            if (body.containsKey("exampleMeaning")) word.setExampleMeaning(body.get("exampleMeaning"));
-            wordRepository.save(word);
+            if (body.containsKey("phonetic")) word.setPhonetic((String) body.get("phonetic"));
+            if (body.containsKey("meaning")) word.setMeaning((String) body.get("meaning"));
+            if (body.containsKey("exampleSentence")) word.setExampleSentence((String) body.get("exampleSentence"));
+            if (body.containsKey("exampleMeaning")) word.setExampleMeaning((String) body.get("exampleMeaning"));
+            word = wordRepository.save(word);
+
+            // 归属词组：未指定则默认词组
+            List<Long> groupIds = null;
+            if (body.get("groupIds") instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> raw = (List<Object>) body.get("groupIds");
+                groupIds = raw.stream().filter(Objects::nonNull).map(v -> ((Number) v).longValue()).collect(Collectors.toList());
+            }
+            wordGroupService.setWordGroups(word.getId(), groupIds);
+
             // 异步生成音频
             audioGenerationTaskService.triggerGeneration(wordText.trim());
             result.put("success", true);
@@ -240,11 +234,12 @@ public class WordController {
         }
     }
 
-    /** 删除单个单词 */
+    /** 删除单个单词（同时清理词组关联） */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> deleteWord(@PathVariable Long id) {
         Map<String, Object> result = new HashMap<>();
         if (wordRepository.existsById(id)) {
+            wordGroupService.removeWordMemberships(id);
             wordRepository.deleteById(id);
             result.put("success", true);
             result.put("message", "删除成功");
@@ -310,6 +305,53 @@ public class WordController {
                 result.put("message", "单词不存在");
                 return ResponseEntity.notFound().build();
             });
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /** 覆盖式设置某个单词所属词组（编辑单词时使用） */
+    @PutMapping("/{id}/groups")
+    public ResponseEntity<Map<String, Object>> setWordGroups(
+            @PathVariable Long id, @RequestBody Map<String, List<Long>> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            wordGroupService.setWordGroups(id, body.get("groupIds"));
+            result.put("success", true);
+            result.put("message", "词组已更新");
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /** 批量给选中的单词调整词组（mode: replace / add / remove） */
+    @PostMapping("/batch-groups")
+    public ResponseEntity<Map<String, Object>> batchUpdateGroups(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<Long> wordIds = new ArrayList<>();
+            if (body.get("wordIds") instanceof List) {
+                for (Object v : (List<?>) body.get("wordIds")) {
+                    if (v != null) wordIds.add(((Number) v).longValue());
+                }
+            }
+            List<Long> groupIds = new ArrayList<>();
+            if (body.get("groupIds") instanceof List) {
+                for (Object v : (List<?>) body.get("groupIds")) {
+                    if (v != null) groupIds.add(((Number) v).longValue());
+                }
+            }
+            String mode = (String) body.get("mode");
+            int count = wordGroupService.batchUpdateGroups(wordIds, groupIds, mode);
+            result.put("success", true);
+            result.put("count", count);
+            result.put("message", "已调整 " + count + " 个单词的词组");
+            return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             result.put("success", false);
             result.put("message", e.getMessage());

@@ -1,6 +1,8 @@
 package com.wordreview.service;
 
 import com.wordreview.entity.Word;
+import com.wordreview.entity.WordGroupMember;
+import com.wordreview.repository.WordGroupMemberRepository;
 import com.wordreview.repository.WordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,20 +23,28 @@ import java.util.Optional;
 public class ExcelImportService {
 
     private final WordRepository wordRepository;
+    private final WordGroupMemberRepository memberRepository;
+    private final WordGroupService wordGroupService;
 
     @PersistenceContext
     private EntityManager entityManager;
 
     /**
      * 导入 Excel 文件，解析 A-E 列入库
-     * Upsert 逻辑：word 已存在则更新内容字段，保留复习统计数据
+     * Upsert 逻辑：word 已存在则更新内容字段，保留复习统计数据。
+     * groupId 指定导入目标词组：
+     *   - 已存在的单词：补充与目标词组的关联关系
+     *   - 新单词：写入并归属目标词组
+     *   groupId 为空时归属默认词组。
      */
     @Transactional
-    public int importExcel(MultipartFile file) throws IOException {
+    public int importExcel(MultipartFile file, Long groupId) throws IOException {
         String filename = file.getOriginalFilename();
         if (filename == null || (!filename.endsWith(".xls") && !filename.endsWith(".xlsx"))) {
             throw new IllegalArgumentException("仅支持 .xls 和 .xlsx 格式的 Excel 文件");
         }
+
+        Long targetGroupId = groupId != null ? groupId : wordGroupService.getDefaultGroupId();
 
         int count = 0;
         try (InputStream is = file.getInputStream();
@@ -78,8 +88,18 @@ public class ExcelImportService {
                     log.debug("新增单词: {}", wordText);
                 }
 
-                entityManager.persist(entityManager.merge(word));
+                Word managed = (Word) entityManager.merge(word);
                 entityManager.flush();
+                Long wordId = managed.getId();
+
+                // 补充目标词组关联（已存在则跳过）
+                if (!memberRepository.existsByWordIdAndGroupId(wordId, targetGroupId)) {
+                    WordGroupMember member = new WordGroupMember();
+                    member.setWordId(wordId);
+                    member.setGroupId(targetGroupId);
+                    memberRepository.saveAndFlush(member);
+                }
+
                 entityManager.clear(); // 清空持久化上下文，防止批量积累
                 count++;
             }

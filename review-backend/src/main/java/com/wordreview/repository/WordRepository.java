@@ -42,4 +42,15 @@ public interface WordRepository extends JpaRepository<Word, Long> {
     /** 易错词 Top N：按错误率降序 */
     @Query("SELECT w FROM Word w WHERE (w.recogWrong + w.spellWrong) > 0 ORDER BY (w.recogWrong + w.spellWrong) * 1.0 / (w.reviewTotal + 1) DESC")
     List<Word> findTopErrorProne(Pageable pageable);
+
+    // ==================== 按词组筛选 ====================
+
+    /** 按词组（含子孙词组）分页查询全部单词 */
+    @Query("SELECT w FROM Word w WHERE w.id IN (SELECT m.wordId FROM WordGroupMember m WHERE m.groupId IN :groupIds)")
+    Page<Word> findByGroupIds(@Param("groupIds") List<Long> groupIds, Pageable pageable);
+
+    /** 按词组（含子孙词组）+ 关键词分页查询 */
+    @Query("SELECT w FROM Word w WHERE w.id IN (SELECT m.wordId FROM WordGroupMember m WHERE m.groupId IN :groupIds)"
+            + " AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%)")
+    Page<Word> findByGroupIdsAndKeyword(@Param("groupIds") List<Long> groupIds, @Param("kw") String keyword, Pageable pageable);
 }

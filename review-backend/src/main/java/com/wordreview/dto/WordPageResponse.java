@@ -1,6 +1,7 @@
 package com.wordreview.dto;
 
 import lombok.Data;
+
 import java.util.List;
 
 @Data
@@ -26,5 +27,6 @@ public class WordPageResponse {
         private Integer spellWrong;
         private Boolean isDormant;
         private Boolean recogOnly;
+        private List<GroupNodeDTO> groups;   // 所属词组
     }
 }

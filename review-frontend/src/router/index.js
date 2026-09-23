@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '../components/Layout.vue'
 import WordManage from '../views/WordManage.vue'
+import GroupManage from '../views/GroupManage.vue'
 import DataManage from '../views/DataManage.vue'
 import ReviewCenter from '../views/ReviewCenter.vue'
 import StatsDashboard from '../views/StatsDashboard.vue'
@@ -12,6 +13,7 @@ const routes = [
     redirect: '/words',
     children: [
       { path: 'words', name: 'Words', component: WordManage },
+      { path: 'groups', name: 'Groups', component: GroupManage },
       { path: 'data', name: 'Data', component: DataManage },
       { path: 'review', name: 'Review', component: ReviewCenter },
       { path: 'stats', name: 'Stats', component: StatsDashboard }

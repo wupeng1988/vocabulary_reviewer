@@ -5,14 +5,33 @@
       <template #header>
         <span style="font-size: 16px; font-weight: bold">📚 导入词库</span>
       </template>
+      <!-- 先选择导入目标词组 -->
+      <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px">
+        <span style="color: #606266">导入到词组：</span>
+        <el-tree-select
+          v-model="importGroupId"
+          :data="groupOptions"
+          clearable
+          check-strictly
+          node-key="value"
+          :props="{ value: 'value', label: 'label', children: 'children' }"
+          placeholder="请先选择要导入的词组"
+          style="width: 320px"
+        />
+        <span style="color: #909399; font-size: 12px">
+          已存在的单词只新增与该词组的关联，不会被重复创建
+        </span>
+      </div>
       <el-upload
         ref="uploadRef"
         action="/api/words/import"
         name="file"
+        :data="uploadData"
         :limit="1"
         :on-success="handleUploadSuccess"
         :on-error="handleUploadError"
         :before-upload="beforeUpload"
+        :disabled="!importGroupId"
         accept=".xls,.xlsx"
         drag
       >
@@ -29,7 +48,7 @@
           <el-icon style="margin-right: 4px"><download /></el-icon>导出为 Excel
         </el-button>
         <span style="color: #909399; font-size: 12px; margin-left: 8px">
-          将所有单词导出为 Excel 文件，A-E 列依次对应：生词、音标、含义、例句、例句释义
+          按词组分 Sheet 导出（每个词组一个 Sheet，A-E 列依次对应：生词、音标、含义、例句、例句释义）；未归属词组的单词导出到「未分组」Sheet
         </span>
       </div>
     </el-card>
@@ -45,7 +64,7 @@
             <el-icon style="margin-right: 4px"><download /></el-icon>导出全部数据
           </el-button>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
-            导出所有单词（含复习统计）和复习配置为 JSON 文件，可用于迁移到其他设备
+            导出所有单词（含复习统计）、词组关系和复习配置为 JSON 文件，可用于迁移到其他设备
           </div>
         </el-col>
         <el-col :span="12">
@@ -65,7 +84,8 @@
             </el-button>
           </el-upload>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
-            从 JSON 备份文件恢复所有单词和复习配置（已有单词数据将被覆盖）
+            从 JSON 备份文件恢复所有单词、词组关系和复习配置（已有单词数据将被覆盖）；
+            老版本备份（无词组关系）会自动导入到默认词组
           </div>
         </el-col>
       </el-row>
@@ -74,10 +94,25 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { UploadFilled, Download, Upload } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import api, { exportData as apiExport, exportExcel as apiExportExcel } from '../api'
+import { loadGroupTree, toTreeOptions } from '../utils/group'
+
+// ========== 词组选择 ==========
+const groupTree = ref([])
+const importGroupId = ref(null)
+const groupOptions = computed(() => toTreeOptions(groupTree.value))
+const uploadData = computed(() => ({ groupId: importGroupId.value }))
+
+onMounted(async () => {
+  try {
+    groupTree.value = await loadGroupTree()
+  } catch (e) {
+    ElMessage.error('加载词组失败')
+  }
+})
 
 // ========== Excel 导入 ==========
 const uploadRef = ref(null)
@@ -87,6 +122,10 @@ const beforeUpload = (file) => {
   const name = file.name
   if (!name.endsWith('.xls') && !name.endsWith('.xlsx')) {
     ElMessage.error('仅支持 .xls 和 .xlsx 格式')
+    return false
+  }
+  if (!importGroupId.value) {
+    ElMessage.error('请先选择导入的词组')
     return false
   }
   return true

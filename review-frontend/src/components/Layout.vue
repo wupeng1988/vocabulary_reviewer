@@ -15,6 +15,14 @@
         <el-menu-item index="/words">
           <span>📚 词库管理</span>
         </el-menu-item>
+        <el-sub-menu index="groups">
+          <template #title>
+            <span style="margin-left: 8px">🗂️ 词组管理</span>
+          </template>
+          <el-menu-item index="/groups" style="padding-left: 48px !important">
+            <span>词组管理</span>
+          </el-menu-item>
+        </el-sub-menu>
         <el-menu-item index="/data">
           <span>🔧 数据管理</span>
         </el-menu-item>

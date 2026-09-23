@@ -2,7 +2,8 @@
   <div>
     <!-- 搜索栏 - sticky 固定顶部 -->
     <el-card class="sticky-search">
-      <el-row :gutter="20" align="middle">
+      <!-- 第一行：搜索 + 词组筛选 -->
+      <el-row :gutter="16" align="middle">
         <el-col :span="5">
           <el-input
             v-model="keyword"
@@ -17,7 +18,37 @@
           </el-input>
         </el-col>
         <el-col :span="7">
+          <el-tree-select
+            v-model="filterGroupId"
+            :data="groupOptions"
+            clearable
+            check-strictly
+            node-key="value"
+            :props="{ value: 'value', label: 'label', children: 'children' }"
+            placeholder="按词组筛选（含子词组）"
+            style="width: 100%"
+            @change="onFilterGroupChange"
+          />
+        </el-col>
+        <el-col :span="3">
           <el-button size="small" type="primary" @click="loadWords">搜索</el-button>
+        </el-col>
+        <el-col :span="9" style="text-align: right">
+          <span style="margin-right: 10px">
+            <el-button :type="hideMeaning ? 'warning' : 'default'" size="small" @click="hideMeaning = !hideMeaning">
+              {{ hideMeaning ? '显示含义' : '隐藏含义' }}
+            </el-button>
+            <el-button :type="hideExampleMeaning ? 'warning' : 'default'" size="small" @click="hideExampleMeaning = !hideExampleMeaning">
+              {{ hideExampleMeaning ? '显示例句释义' : '隐藏例句释义' }}
+            </el-button>
+          </span>
+          <span style="color: #909399">共 {{ totalElements }} 个单词</span>
+        </el-col>
+      </el-row>
+
+      <!-- 第二行：操作按钮组 -->
+      <el-row :gutter="16" style="margin-top: 12px">
+        <el-col :span="24">
           <el-button size="small" type="success" @click="openAddDialog">➕ 新增</el-button>
           <el-button
             size="small"
@@ -29,21 +60,20 @@
           </el-button>
           <el-button
             size="small"
+            type="warning"
+            :disabled="selectedWords.length === 0"
+            @click="openAdjustDialog"
+          >
+            🗂️ 调整词组
+          </el-button>
+          <el-button
+            size="small"
             type="primary"
             :disabled="selectedWords.length === 0"
             @click="openReviewDialog"
           >
             📖 复习 ({{ selectedWords.length }})
           </el-button>
-        </el-col>
-        <el-col :span="12" style="text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 10px">
-          <el-button :type="hideMeaning ? 'warning' : 'default'" size="small" @click="hideMeaning = !hideMeaning">
-            {{ hideMeaning ? '显示含义' : '隐藏含义' }}
-          </el-button>
-          <el-button :type="hideExampleMeaning ? 'warning' : 'default'" size="small" @click="hideExampleMeaning = !hideExampleMeaning">
-            {{ hideExampleMeaning ? '显示例句释义' : '隐藏例句释义' }}
-          </el-button>
-          <span style="color: #909399">共 {{ totalElements }} 个单词</span>
         </el-col>
       </el-row>
     </el-card>
@@ -73,6 +103,13 @@
           <template #default="{ row }">
             <span v-if="!hideExampleMeaning">{{ row.exampleMeaning }}</span>
             <span v-else style="color: #c0c4cc">***</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="词组" width="180">
+          <template #default="{ row }">
+            <el-tag v-for="g in row.groups" :key="g.id" size="small" style="margin: 1px 2px" :type="g.isDefault ? 'danger' : 'info'">
+              {{ g.name }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="reviewTotal" label="复习次数" width="110" align="center" sortable="custom">
@@ -121,7 +158,7 @@
     </el-card>
 
     <!-- 编辑弹窗 -->
-    <el-dialog v-model="showEditDialog" title="编辑单词" width="550px" :close-on-click-modal="false">
+    <el-dialog v-model="showEditDialog" title="编辑单词" width="580px" :close-on-click-modal="false">
       <el-form :model="editForm" label-width="90px">
         <el-form-item label="生词" required>
           <el-input v-model="editForm.word" placeholder="英文单词" />
@@ -138,6 +175,19 @@
         <el-form-item label="例句释义">
           <el-input v-model="editForm.exampleMeaning" type="textarea" :rows="2" placeholder="例句的中文翻译" />
         </el-form-item>
+        <el-form-item label="所属词组">
+          <el-tree-select
+            v-model="editForm.groupIds"
+            :data="groupOptions"
+            multiple
+            show-checkbox
+            check-strictly
+            node-key="value"
+            :props="{ value: 'value', label: 'label', children: 'children' }"
+            placeholder="选择所属词组（可多选）"
+            style="width: 100%"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showEditDialog = false">取消</el-button>
@@ -146,7 +196,7 @@
     </el-dialog>
 
     <!-- 新增弹窗 -->
-    <el-dialog v-model="showAddDialog" title="新增单词" width="550px" :close-on-click-modal="false">
+    <el-dialog v-model="showAddDialog" title="新增单词" width="580px" :close-on-click-modal="false">
       <el-form :model="addForm" label-width="90px">
         <el-form-item label="生词" required>
           <el-input v-model="addForm.word" placeholder="英文单词" />
@@ -163,10 +213,63 @@
         <el-form-item label="例句释义">
           <el-input v-model="addForm.exampleMeaning" type="textarea" :rows="2" placeholder="例句的中文翻译" />
         </el-form-item>
+        <el-form-item label="所属词组">
+          <el-tree-select
+            v-model="addForm.groupIds"
+            :data="groupOptions"
+            multiple
+            show-checkbox
+            check-strictly
+            node-key="value"
+            :props="{ value: 'value', label: 'label', children: 'children' }"
+            placeholder="选择所属词组（可多选）"
+            style="width: 100%"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showAddDialog = false">取消</el-button>
         <el-button type="primary" :loading="addSaving" @click="saveAdd">添加</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 调整词组弹窗 -->
+    <el-dialog v-model="showAdjustDialog" title="🗂️ 调整词组" width="480px" :close-on-click-modal="false">
+      <div style="padding: 6px 0">
+        <p style="margin-bottom: 16px; color: #606266">
+          已选择 <strong>{{ selectedWords.length }}</strong> 个单词，请设置其所属词组：
+        </p>
+        <el-form label-width="90px">
+          <el-form-item label="操作方式">
+            <el-radio-group v-model="adjustMode">
+              <el-radio value="replace">覆盖（替换为所选词组）</el-radio>
+              <el-radio value="add">追加（在原有基础上增加）</el-radio>
+              <el-radio value="remove">移除（从所选词组中移除）</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="所属词组">
+            <el-tree-select
+              v-model="adjustGroupIds"
+              :data="groupOptions"
+              multiple
+              show-checkbox
+              check-strictly
+              node-key="value"
+              :props="{ value: 'value', label: 'label', children: 'children' }"
+              placeholder="选择词组（可多选）"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item v-if="adjustMode === 'replace'">
+            <span style="color: #909399; font-size: 12px; line-height: 1.6">
+              提示：覆盖后选中的单词将只保留所选词组。
+            </span>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="showAdjustDialog = false">取消</el-button>
+        <el-button type="primary" :loading="adjustSaving" @click="saveAdjustGroups">确定</el-button>
       </template>
     </el-dialog>
 
@@ -202,11 +305,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import api from '../api'
+import { loadGroupTree, toTreeOptions } from '../utils/group'
 
 const router = useRouter()
 const words = ref([])
@@ -218,6 +322,35 @@ const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
 const batchRunning = ref(false)
 const batchChecking = ref(false)
+
+// ==================== 词组筛选 ====================
+const groupTree = ref([])
+const filterGroupId = ref(null)
+const groupOptions = computed(() => toTreeOptions(groupTree.value))
+const defaultGroupId = ref(null)
+
+const loadGroups = async () => {
+  try {
+    groupTree.value = await loadGroupTree()
+    // 找到默认词组用于新增时默认勾选
+    const findDefault = (nodes) => {
+      for (const n of nodes) {
+        if (n.isDefault) return n.id
+        const inChild = findDefault(n.children || [])
+        if (inChild) return inChild
+      }
+      return null
+    }
+    defaultGroupId.value = findDefault(groupTree.value)
+  } catch (e) {
+    ElMessage.error('加载词组失败')
+  }
+}
+
+const onFilterGroupChange = () => {
+  currentPage.value = 1
+  loadWords()
+}
 
 // 排序状态
 const sortField = ref('id')
@@ -369,7 +502,8 @@ const loadWords = async () => {
         size: pageSize.value,
         keyword: keyword.value || undefined,
         sortField: sortField.value,
-        sortOrder: sortOrder.value
+        sortOrder: sortOrder.value,
+        groupId: filterGroupId.value || undefined
       }
     })
     words.value = res.content
@@ -409,7 +543,8 @@ const editForm = ref({
   phonetic: '',
   meaning: '',
   exampleSentence: '',
-  exampleMeaning: ''
+  exampleMeaning: '',
+  groupIds: []
 })
 
 const openEditDialog = (row) => {
@@ -419,7 +554,8 @@ const openEditDialog = (row) => {
     phonetic: row.phonetic || '',
     meaning: row.meaning || '',
     exampleSentence: row.exampleSentence || '',
-    exampleMeaning: row.exampleMeaning || ''
+    exampleMeaning: row.exampleMeaning || '',
+    groupIds: (row.groups || []).map(g => g.id)
   }
   showEditDialog.value = true
 }
@@ -442,6 +578,8 @@ const saveEdit = async () => {
       exampleSentence: editForm.value.exampleSentence,
       exampleMeaning: editForm.value.exampleMeaning
     })
+    // 更新词组归属
+    await api.put(`/words/${editForm.value.id}/groups`, { groupIds: editForm.value.groupIds })
     ElMessage.success('保存成功')
     showEditDialog.value = false
     loadWords()
@@ -496,7 +634,8 @@ const addForm = ref({
   phonetic: '',
   meaning: '',
   exampleSentence: '',
-  exampleMeaning: ''
+  exampleMeaning: '',
+  groupIds: []
 })
 
 const openAddDialog = () => {
@@ -505,7 +644,8 @@ const openAddDialog = () => {
     phonetic: '',
     meaning: '',
     exampleSentence: '',
-    exampleMeaning: ''
+    exampleMeaning: '',
+    groupIds: defaultGroupId.value ? [defaultGroupId.value] : []
   }
   showAddDialog.value = true
 }
@@ -526,7 +666,8 @@ const saveAdd = async () => {
       phonetic: addForm.value.phonetic,
       meaning: addForm.value.meaning,
       exampleSentence: addForm.value.exampleSentence,
-      exampleMeaning: addForm.value.exampleMeaning
+      exampleMeaning: addForm.value.exampleMeaning,
+      groupIds: addForm.value.groupIds
     })
     ElMessage.success('添加成功')
     showAddDialog.value = false
@@ -538,8 +679,45 @@ const saveAdd = async () => {
   addSaving.value = false
 }
 
+// ==================== 调整词组 ====================
+const showAdjustDialog = ref(false)
+const adjustSaving = ref(false)
+const adjustMode = ref('replace')
+const adjustGroupIds = ref([])
+
+const openAdjustDialog = () => {
+  if (selectedWords.value.length === 0) {
+    ElMessage.warning('请先选择要调整的单词')
+    return
+  }
+  adjustMode.value = 'replace'
+  adjustGroupIds.value = []
+  showAdjustDialog.value = true
+}
+
+const saveAdjustGroups = async () => {
+  if (adjustGroupIds.value.length === 0) {
+    ElMessage.warning('请至少选择一个词组')
+    return
+  }
+  adjustSaving.value = true
+  try {
+    const res = await api.post('/words/batch-groups', {
+      wordIds: selectedWords.value.map(w => w.id),
+      groupIds: adjustGroupIds.value,
+      mode: adjustMode.value
+    })
+    ElMessage.success(res.message || '词组已调整')
+    showAdjustDialog.value = false
+    loadWords()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '调整词组失败')
+  }
+  adjustSaving.value = false
+}
+
 onMounted(() => {
-  loadWords()
+  loadGroups().then(loadWords)
   checkBatchStatus()
 })
 

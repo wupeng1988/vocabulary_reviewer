@@ -5,7 +5,11 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.wordreview.entity.ReviewConfig;
 import com.wordreview.entity.Word;
+import com.wordreview.entity.WordGroup;
+import com.wordreview.entity.WordGroupMember;
 import com.wordreview.repository.ReviewConfigRepository;
+import com.wordreview.repository.WordGroupMemberRepository;
+import com.wordreview.repository.WordGroupRepository;
 import com.wordreview.repository.WordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +30,9 @@ public class DataExportImportService {
 
     private final WordRepository wordRepository;
     private final ReviewConfigRepository configRepository;
+    private final WordGroupRepository groupRepository;
+    private final WordGroupMemberRepository memberRepository;
+    private final WordGroupService wordGroupService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -35,27 +42,51 @@ public class DataExportImportService {
             .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     /**
-     * 导出所有数据为 JSON 字节流
-     * 包含所有单词（含复习统计）和复习配置
+     * 导出所有数据为 JSON 字节流。
+     * version 2：追加词组树和单词的词组归属；兼容老版本导入。
      */
     public byte[] exportAll() throws IOException {
         Map<String, Object> exportData = new LinkedHashMap<>();
-        exportData.put("version", 1);
+        exportData.put("version", 2);
         exportData.put("exportTime", LocalDateTime.now());
 
         // 导出复习配置
-        Optional<ReviewConfig> configOpt = configRepository.findAll().stream().findFirst();
-        if (configOpt.isPresent()) {
-            ReviewConfig config = configOpt.get();
+        configRepository.findAll().stream().findFirst().ifPresent(config -> {
             Map<String, Object> configMap = new LinkedHashMap<>();
             configMap.put("batchSize", config.getBatchSize());
             configMap.put("maxDormantDays", config.getMaxDormantDays());
             configMap.put("emergencyWeight", config.getEmergencyWeight());
             exportData.put("reviewConfig", configMap);
+        });
+
+        // 导出词组树（父在前子在后，parentCode 引用父编号）
+        List<WordGroup> groups = groupRepository.findAll();
+        Map<Long, String> codeById = new HashMap<>();
+        for (WordGroup g : groups) codeById.put(g.getId(), g.getCode());
+
+        List<Map<String, Object>> groupList = new ArrayList<>();
+        for (Long groupId : topoOrder(groups)) {
+            WordGroup g = groups.stream().filter(x -> x.getId().equals(groupId)).findFirst().orElse(null);
+            if (g == null) continue;
+            Map<String, Object> groupMap = new LinkedHashMap<>();
+            groupMap.put("code", g.getCode());
+            groupMap.put("name", g.getName());
+            groupMap.put("isDefault", g.getIsDefault());
+            groupMap.put("parentCode", g.getParentId() == null ? null : codeById.get(g.getParentId()));
+            groupList.add(groupMap);
+        }
+        exportData.put("groups", groupList);
+
+        // 导出所有单词（不含 id，导入时按 word 做 upsert），带词组编号列表
+        List<Word> allWords = wordRepository.findAll();
+        Map<Long, List<String>> codesByWord = new HashMap<>();
+        for (WordGroupMember m : memberRepository.findAll()) {
+            String code = codeById.get(m.getGroupId());
+            if (code != null) {
+                codesByWord.computeIfAbsent(m.getWordId(), k -> new ArrayList<>()).add(code);
+            }
         }
 
-        // 导出所有单词（不含 id，导入时按 word 做 upsert）
-        List<Word> allWords = wordRepository.findAll();
         List<Map<String, Object>> wordList = new ArrayList<>();
         for (Word w : allWords) {
             Map<String, Object> wordMap = new LinkedHashMap<>();
@@ -73,18 +104,47 @@ public class DataExportImportService {
             wordMap.put("consecutiveCorrect", w.getConsecutiveCorrect());
             wordMap.put("isDormant", w.getIsDormant());
             wordMap.put("recogOnly", w.getRecogOnly());
+            List<String> codes = codesByWord.get(w.getId());
+            wordMap.put("groups", codes != null ? codes : Collections.emptyList());
             wordList.add(wordMap);
         }
         exportData.put("words", wordList);
 
-        log.info("数据导出完成，共 {} 个单词", allWords.size());
+        log.info("数据导出完成，共 {} 个单词，{} 个词组", allWords.size(), groups.size());
         return objectMapper.writeValueAsBytes(exportData);
     }
 
+    /** 词组按父前子后的拓扑顺序排序（BFS） */
+    private List<Long> topoOrder(List<WordGroup> groups) {
+        Map<Long, List<Long>> children = new HashMap<>();
+        for (WordGroup g : groups) {
+            if (g.getParentId() != null) {
+                children.computeIfAbsent(g.getParentId(), k -> new ArrayList<>()).add(g.getId());
+            }
+        }
+        List<Long> result = new ArrayList<>();
+        Deque<Long> queue = new ArrayDeque<>();
+        for (WordGroup g : groups) {
+            if (g.getParentId() == null) queue.add(g.getId());
+        }
+        Set<Long> visited = new HashSet<>();
+        while (!queue.isEmpty()) {
+            Long id = queue.poll();
+            if (!visited.add(id)) continue;
+            result.add(id);
+            queue.addAll(children.getOrDefault(id, Collections.emptyList()));
+        }
+        // 兜底：孤儿节点（parent 缺失）也补进来
+        for (WordGroup g : groups) {
+            if (!visited.contains(g.getId())) result.add(g.getId());
+        }
+        return result;
+    }
+
     /**
-     * 从 JSON 文件导入数据
-     * Upsert 逻辑：按 word 字段匹配，存在则更新所有字段（含复习统计），不存在则新建
-     * ReviewConfig 直接替换现有配置
+     * 从 JSON 文件导入数据（支持 version 1 老版本与 version 2）。
+     * - 有词组关系：先建词组树，再按文件中的归属导入
+     * - 无词组关系（老版本）：所有单词加入默认词组
      */
     @Transactional
     public int importData(MultipartFile file) throws IOException {
@@ -96,93 +156,108 @@ public class DataExportImportService {
         @SuppressWarnings("unchecked")
         Map<String, Object> importData = objectMapper.readValue(file.getInputStream(), Map.class);
 
-        // 版本校验
-        Object version = importData.get("version");
-        if (version == null || ((Number) version).intValue() != 1) {
+        // 版本校验：接受 1（老版本）和 2
+        Object versionObj = importData.get("version");
+        int version = versionObj == null ? 1 : ((Number) versionObj).intValue();
+        if (version != 1 && version != 2) {
             throw new IllegalArgumentException("不支持的数据文件版本");
         }
 
+        // ===== 解析词组 =====
+        Map<String, Long> codeToId = new HashMap<>();
+        boolean hasGroupRelations = false;
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> groupList = (List<Map<String, Object>>) importData.get("groups");
+        if (groupList != null && !groupList.isEmpty()) {
+            hasGroupRelations = true;
+            // 第一遍：创建/更新所有词组（不含父级关系）
+            Set<String> seenCodes = new HashSet<>();
+            for (Map<String, Object> groupMap : groupList) {
+                String code = groupMap.get("code") == null ? null : groupMap.get("code").toString().trim();
+                String name = groupMap.get("name") == null ? null : groupMap.get("name").toString().trim();
+                if (code == null || code.isEmpty() || !seenCodes.add(code)) continue;
+
+                WordGroup group = groupRepository.findByCode(code).orElseGet(WordGroup::new);
+                group.setCode(code);
+                group.setName(name);
+                if (Boolean.TRUE.equals(groupMap.get("isDefault"))) {
+                    group.setIsDefault(true);
+                }
+                codeToId.put(code, group.getId());
+                WordGroup saved = groupRepository.save(group);
+                codeToId.put(code, saved.getId());
+            }
+            // 第二遍：建立父子关系
+            for (Map<String, Object> groupMap : groupList) {
+                String code = groupMap.get("code") == null ? null : groupMap.get("code").toString().trim();
+                Long groupId = codeToId.get(code);
+                if (groupId == null) continue;
+                Object parentCodeObj = groupMap.get("parentCode");
+                Long parentId = null;
+                if (parentCodeObj != null && !parentCodeObj.toString().trim().isEmpty()) {
+                    parentId = codeToId.get(parentCodeObj.toString().trim());
+                }
+                WordGroup group = groupRepository.findById(groupId).orElse(null);
+                if (group != null && !Objects.equals(group.getParentId(), parentId) && !Objects.equals(parentId, groupId)) {
+                    group.setParentId(parentId);
+                    groupRepository.save(group);
+                }
+            }
+        }
+        wordGroupService.ensureDefaultGroup();
+        Long defaultGroupId = wordGroupService.getDefaultGroupId();
+
         int wordCount = 0;
 
-        // 导入复习配置
+        // ===== 导入复习配置 =====
         @SuppressWarnings("unchecked")
         Map<String, Object> configMap = (Map<String, Object>) importData.get("reviewConfig");
         if (configMap != null) {
-            ReviewConfig config = configRepository.findAll().stream().findFirst().orElseGet(() -> {
-                ReviewConfig c = new ReviewConfig();
-                return configRepository.save(c);
-            });
-            if (configMap.get("batchSize") != null) {
-                config.setBatchSize(((Number) configMap.get("batchSize")).intValue());
-            }
-            if (configMap.get("maxDormantDays") != null) {
-                config.setMaxDormantDays(((Number) configMap.get("maxDormantDays")).intValue());
-            }
-            if (configMap.get("emergencyWeight") != null) {
-                config.setEmergencyWeight(((Number) configMap.get("emergencyWeight")).doubleValue());
-            }
+            ReviewConfig config = configRepository.findAll().stream().findFirst().orElseGet(() -> configRepository.save(new ReviewConfig()));
+            if (configMap.get("batchSize") != null) config.setBatchSize(((Number) configMap.get("batchSize")).intValue());
+            if (configMap.get("maxDormantDays") != null) config.setMaxDormantDays(((Number) configMap.get("maxDormantDays")).intValue());
+            if (configMap.get("emergencyWeight") != null) config.setEmergencyWeight(((Number) configMap.get("emergencyWeight")).doubleValue());
             configRepository.save(config);
             log.info("复习配置已导入");
         }
 
-        // 导入单词
+        // ===== 导入单词（最后统一处理词组归属） =====
+        Map<Long, List<Long>> pendingReplaceMemberships = new LinkedHashMap<>();
+        List<Long> pendingDefaultAdd = new ArrayList<>();
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> wordList = (List<Map<String, Object>>) importData.get("words");
         if (wordList != null) {
             for (Map<String, Object> wordMap : wordList) {
-                String wordText = (String) wordMap.get("word");
-                if (wordText == null || wordText.trim().isEmpty()) continue;
+                String wordText = wordMap.get("word") == null ? null : wordMap.get("word").toString().trim();
+                if (wordText == null || wordText.isEmpty()) continue;
 
-                wordText = wordText.trim();
                 Optional<Word> existing = wordRepository.findByWord(wordText);
                 Word word;
                 if (existing.isPresent()) {
-                    // 已存在：更新所有字段（含复习统计）
                     word = existing.get();
                 } else {
-                    // 新建
                     word = new Word();
                     word.setWord(wordText);
                 }
 
-                // 设置内容字段
-                word.setPhonetic((String) wordMap.get("phonetic"));
-                word.setMeaning((String) wordMap.get("meaning"));
-                word.setExampleSentence((String) wordMap.get("exampleSentence"));
-                word.setExampleMeaning((String) wordMap.get("exampleMeaning"));
+                word.setPhonetic(wordMap.get("phonetic") == null ? null : wordMap.get("phonetic").toString());
+                word.setMeaning(wordMap.get("meaning") == null ? null : wordMap.get("meaning").toString());
+                word.setExampleSentence(wordMap.get("exampleSentence") == null ? null : wordMap.get("exampleSentence").toString());
+                word.setExampleMeaning(wordMap.get("exampleMeaning") == null ? null : wordMap.get("exampleMeaning").toString());
 
-                // 设置复习统计
-                if (wordMap.get("reviewTotal") != null) {
-                    word.setReviewTotal(((Number) wordMap.get("reviewTotal")).intValue());
-                }
-                if (wordMap.get("recogCorrect") != null) {
-                    word.setRecogCorrect(((Number) wordMap.get("recogCorrect")).intValue());
-                }
-                if (wordMap.get("recogWrong") != null) {
-                    word.setRecogWrong(((Number) wordMap.get("recogWrong")).intValue());
-                }
-                if (wordMap.get("spellCorrect") != null) {
-                    word.setSpellCorrect(((Number) wordMap.get("spellCorrect")).intValue());
-                }
-                if (wordMap.get("spellWrong") != null) {
-                    word.setSpellWrong(((Number) wordMap.get("spellWrong")).intValue());
-                }
-                if (wordMap.get("consecutiveCorrect") != null) {
-                    word.setConsecutiveCorrect(((Number) wordMap.get("consecutiveCorrect")).intValue());
-                }
-                if (wordMap.get("isDormant") != null) {
-                    word.setIsDormant((Boolean) wordMap.get("isDormant"));
-                }
-                if (wordMap.get("recogOnly") != null) {
-                    word.setRecogOnly((Boolean) wordMap.get("recogOnly"));
-                }
+                if (wordMap.get("reviewTotal") != null) word.setReviewTotal(((Number) wordMap.get("reviewTotal")).intValue());
+                if (wordMap.get("recogCorrect") != null) word.setRecogCorrect(((Number) wordMap.get("recogCorrect")).intValue());
+                if (wordMap.get("recogWrong") != null) word.setRecogWrong(((Number) wordMap.get("recogWrong")).intValue());
+                if (wordMap.get("spellCorrect") != null) word.setSpellCorrect(((Number) wordMap.get("spellCorrect")).intValue());
+                if (wordMap.get("spellWrong") != null) word.setSpellWrong(((Number) wordMap.get("spellWrong")).intValue());
+                if (wordMap.get("consecutiveCorrect") != null) word.setConsecutiveCorrect(((Number) wordMap.get("consecutiveCorrect")).intValue());
+                if (wordMap.get("isDormant") != null) word.setIsDormant((Boolean) wordMap.get("isDormant"));
+                if (wordMap.get("recogOnly") != null) word.setRecogOnly((Boolean) wordMap.get("recogOnly"));
 
-                // 解析 lastReviewDate
                 Object lastReviewDateObj = wordMap.get("lastReviewDate");
                 if (lastReviewDateObj instanceof String) {
                     word.setLastReviewDate(LocalDateTime.parse((String) lastReviewDateObj));
                 } else if (lastReviewDateObj instanceof List) {
-                    // Jackson 反序列化 LocalDateTime 为数组格式时的处理
                     @SuppressWarnings("unchecked")
                     List<Number> dateArr = (List<Number>) lastReviewDateObj;
                     word.setLastReviewDate(LocalDateTime.of(
@@ -191,14 +266,62 @@ public class DataExportImportService {
                             dateArr.get(4).intValue(), dateArr.get(5).intValue()));
                 }
 
-                entityManager.persist(entityManager.merge(word));
+                Word managed = (Word) entityManager.merge(word);
                 entityManager.flush();
+                Long wordId = managed.getId();
+
+                // 解析该单词的词组归属
+                Object groupsObj = wordMap.get("groups");
+                if (hasGroupRelations && groupsObj instanceof List && !((List<?>) groupsObj).isEmpty()) {
+                    // 有词组关系：按文件覆盖写入
+                    List<Long> memberships = new ArrayList<>();
+                    for (Object codeObj : (List<?>) groupsObj) {
+                        Long gid = codeToId.get(codeObj.toString().trim());
+                        if (gid != null) memberships.add(gid);
+                    }
+                    if (memberships.isEmpty()) {
+                        memberships.add(defaultGroupId);
+                    }
+                    pendingReplaceMemberships.put(wordId, memberships);
+                } else {
+                    // 老版本/无词组关系：仅补充默认词组归属，不破坏现有词组（“将单词加到默认词组”）
+                    pendingDefaultAdd.add(wordId);
+                }
+
                 entityManager.clear();
                 wordCount++;
             }
         }
 
+        // 统一写入词组归属
+        for (Map.Entry<Long, List<Long>> entry : pendingReplaceMemberships.entrySet()) {
+            applyMemberships(entry.getKey(), entry.getValue());
+        }
+        for (Long wordId : pendingDefaultAdd) {
+            if (!memberRepository.existsByWordIdAndGroupId(wordId, defaultGroupId)) {
+                WordGroupMember member = new WordGroupMember();
+                member.setWordId(wordId);
+                member.setGroupId(defaultGroupId);
+                memberRepository.save(member);
+            }
+        }
+
         log.info("数据导入完成，共处理 {} 个单词", wordCount);
         return wordCount;
+    }
+
+    /** 覆盖式写入某单词的词组归属 */
+    private void applyMemberships(Long wordId, List<Long> groupIds) {
+        memberRepository.deleteByWordId(wordId);
+        memberRepository.flush();
+        Set<Long> unique = new LinkedHashSet<>(groupIds);
+        for (Long groupId : unique) {
+            if (!memberRepository.existsByWordIdAndGroupId(wordId, groupId)) {
+                WordGroupMember member = new WordGroupMember();
+                member.setWordId(wordId);
+                member.setGroupId(groupId);
+                memberRepository.save(member);
+            }
+        }
     }
 }
