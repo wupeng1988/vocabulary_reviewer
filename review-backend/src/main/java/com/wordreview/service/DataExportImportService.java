@@ -71,6 +71,7 @@ public class DataExportImportService {
             Map<String, Object> groupMap = new LinkedHashMap<>();
             groupMap.put("code", g.getCode());
             groupMap.put("name", g.getName());
+            groupMap.put("sortOrder", g.getSortOrder());
             groupMap.put("isDefault", g.getIsDefault());
             groupMap.put("parentCode", g.getParentId() == null ? null : codeById.get(g.getParentId()));
             groupList.add(groupMap);
@@ -182,6 +183,13 @@ public class DataExportImportService {
                 group.setName(name);
                 if (Boolean.TRUE.equals(groupMap.get("isDefault"))) {
                     group.setIsDefault(true);
+                }
+                // 排序字段（老备份无此字段时保持原值，新词组落为 0）
+                Integer sortOrder = toInteger(groupMap.get("sortOrder"));
+                if (sortOrder != null) {
+                    group.setSortOrder(sortOrder);
+                } else if (group.getId() == null) {
+                    group.setSortOrder(0);
                 }
                 codeToId.put(code, group.getId());
                 WordGroup saved = groupRepository.save(group);
@@ -308,6 +316,19 @@ public class DataExportImportService {
 
         log.info("数据导入完成，共处理 {} 个单词", wordCount);
         return wordCount;
+    }
+
+    /** 安全转 Integer，null/空/非法一律返回 null */
+    private Integer toInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) return ((Number) value).intValue();
+        String s = value.toString().trim();
+        if (s.isEmpty()) return null;
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** 覆盖式写入某单词的词组归属 */

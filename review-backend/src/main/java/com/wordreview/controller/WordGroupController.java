@@ -40,7 +40,8 @@ public class WordGroupController {
             String code = (String) body.get("code");
             String name = (String) body.get("name");
             Long parentId = toLong(body.get("parentId"));
-            WordGroup group = groupService.create(code, name, parentId);
+            Integer sortOrder = toInteger(body.get("sortOrder"));
+            WordGroup group = groupService.create(code, name, parentId, sortOrder);
 
             result.put("success", true);
             result.put("message", "新增成功");
@@ -54,7 +55,7 @@ public class WordGroupController {
         }
     }
 
-    /** 更新词组（编号、名称、上级词组） */
+    /** 更新词组（编号、名称、上级词组、排序） */
     @PutMapping("/{id}")
     public ResponseEntity<Map<String, Object>> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
         Map<String, Object> result = new HashMap<>();
@@ -62,7 +63,8 @@ public class WordGroupController {
             String code = (String) body.get("code");
             String name = (String) body.get("name");
             Long parentId = toLong(body.get("parentId"));
-            WordGroup group = groupService.update(id, code, name, parentId);
+            Integer sortOrder = toInteger(body.get("sortOrder"));
+            WordGroup group = groupService.update(id, code, name, parentId, sortOrder);
 
             result.put("success", true);
             result.put("message", "更新成功");
@@ -98,6 +100,18 @@ public class WordGroupController {
         if (s.isEmpty()) return null;
         try {
             return Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) return ((Number) value).intValue();
+        String s = value.toString().trim();
+        if (s.isEmpty()) return null;
+        try {
+            return Integer.parseInt(s);
         } catch (NumberFormatException e) {
             return null;
         }

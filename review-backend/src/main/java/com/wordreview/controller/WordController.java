@@ -234,21 +234,66 @@ public class WordController {
         }
     }
 
-    /** 删除单个单词（同时清理词组关联） */
+    /**
+     * 删除单词。
+     * mode=word（默认）：彻底删除单词本身，同时清理所有词组关联
+     * mode=group：只移出词组，保留单词；若该单词已不属于任何词组则落到默认词组
+     */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> deleteWord(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteWord(
+            @PathVariable Long id,
+            @RequestParam(value = "mode", required = false, defaultValue = "word") String mode) {
         Map<String, Object> result = new HashMap<>();
-        if (wordRepository.existsById(id)) {
-            wordGroupService.removeWordMemberships(id);
-            wordRepository.deleteById(id);
-            result.put("success", true);
-            result.put("message", "删除成功");
-            return ResponseEntity.ok(result);
-        } else {
+        if (!wordRepository.existsById(id)) {
             result.put("success", false);
             result.put("message", "单词不存在");
             return ResponseEntity.notFound().build();
         }
+
+        if ("group".equalsIgnoreCase(mode)) {
+            List<Long> remaining = wordGroupService.removeWordFromGroup(id, null);
+            result.put("success", true);
+            result.put("message", "已从当前词组移除，单词已保留");
+            result.put("remainingGroupIds", remaining);
+            return ResponseEntity.ok(result);
+        }
+
+        wordGroupService.removeWordMemberships(id);
+        wordRepository.deleteById(id);
+        result.put("success", true);
+        result.put("message", "删除成功");
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 把单词移出指定词组（保留单词本身）。
+     * 若该单词仅属于该词组，则自动加入默认词组。
+     */
+    @DeleteMapping("/{id}/group/{groupId}")
+    public ResponseEntity<Map<String, Object>> removeFromGroup(
+            @PathVariable Long id, @PathVariable Long groupId) {
+        Map<String, Object> result = new HashMap<>();
+        if (!wordRepository.existsById(id)) {
+            result.put("success", false);
+            result.put("message", "单词不存在");
+            return ResponseEntity.notFound().build();
+        }
+        if (!wordGroupService.groupExists(groupId)) {
+            result.put("success", false);
+            result.put("message", "词组不存在");
+            return ResponseEntity.badRequest().body(result);
+        }
+
+        List<Long> remaining = wordGroupService.removeWordFromGroup(id, groupId);
+        Long defaultGroupId = wordGroupService.getDefaultGroupId();
+        // 只有「唯一剩下的词组是默认词组」才算触发了回落
+        boolean fellBack = remaining.size() == 1 && defaultGroupId.equals(remaining.get(0));
+        result.put("success", true);
+        result.put("message", fellBack
+                ? "已从词组移除，该单词已移入默认词组"
+                : "已从词组移除");
+        result.put("remainingGroupIds", remaining);
+        return ResponseEntity.ok(result);
     }
 
     /** 更新单词的仅认读标记 */
@@ -321,6 +366,47 @@ public class WordController {
             wordGroupService.setWordGroups(id, body.get("groupIds"));
             result.put("success", true);
             result.put("message", "词组已更新");
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
+     * 批量删除选中的单词。
+     * mode=word（默认）：彻底删除单词本体及所有词组关联
+     * mode=group：只把单词移出指定词组（groupId，为空则取当前筛选词组），单词保留
+     */
+    @PostMapping("/batch-delete")
+    public ResponseEntity<Map<String, Object>> batchDeleteWords(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<Long> wordIds = new ArrayList<>();
+            if (body.get("wordIds") instanceof List) {
+                for (Object v : (List<?>) body.get("wordIds")) {
+                    if (v != null) wordIds.add(((Number) v).longValue());
+                }
+            }
+            if (wordIds.isEmpty()) {
+                throw new IllegalArgumentException("请先选择单词");
+            }
+            String mode = (String) body.get("mode");
+            Long groupId = body.get("groupId") instanceof Number ? ((Number) body.get("groupId")).longValue() : null;
+
+            if ("group".equalsIgnoreCase(mode)) {
+                int count = wordGroupService.batchRemoveWordsFromGroup(wordIds, groupId);
+                result.put("success", true);
+                result.put("count", count);
+                result.put("message", "已从词组移除 " + count + " 个单词（单词已保留）");
+                return ResponseEntity.ok(result);
+            }
+
+            int count = wordGroupService.purgeWords(wordIds);
+            result.put("success", true);
+            result.put("count", count);
+            result.put("message", "已彻底删除 " + count + " 个单词");
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             result.put("success", false);

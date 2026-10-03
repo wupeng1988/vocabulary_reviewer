@@ -13,6 +13,7 @@
           :data="groupOptions"
           clearable
           check-strictly
+          default-expand-all
           node-key="value"
           :props="{ value: 'value', label: 'label', children: 'children' }"
           placeholder="请先选择要导入的词组"

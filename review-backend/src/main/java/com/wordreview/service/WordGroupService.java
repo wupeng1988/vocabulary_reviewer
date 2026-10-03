@@ -26,6 +26,12 @@ public class WordGroupService {
 
     public static final String DEFAULT_GROUP_NAME = "默认词组";
 
+    /** 排序字段 null 安全比较：数值小者靠前，相同时按编号 code 升序，再按 id */
+    public static final Comparator<WordGroup> GROUP_ORDER =
+            Comparator.comparing(WordGroup::getSortOrder, Comparator.nullsLast(Integer::compareTo))
+                    .thenComparing(WordGroup::getCode, Comparator.nullsLast(String::compareTo))
+                    .thenComparing(WordGroup::getId);
+
     private final WordGroupRepository groupRepository;
     private final WordGroupMemberRepository memberRepository;
     private final WordRepository wordRepository;
@@ -62,7 +68,22 @@ public class WordGroupService {
         }
 
         backfillDefaultMembership(def.getId());
+        backfillSortOrder();
         return def;
+    }
+
+    /** 为历史数据补齐排序字段（加列后旧行为 NULL，统一补 0） */
+    private void backfillSortOrder() {
+        List<WordGroup> pending = groupRepository.findAll().stream()
+                .filter(g -> g.getSortOrder() == null)
+                .collect(Collectors.toList());
+        if (!pending.isEmpty()) {
+            for (WordGroup g : pending) {
+                g.setSortOrder(0);
+            }
+            groupRepository.saveAll(pending);
+            log.info("已为 {} 个历史词组补齐排序字段", pending.size());
+        }
     }
 
     /** 为没有任何词组归属的单词补上默认词组 */
@@ -105,6 +126,7 @@ public class WordGroupService {
             node.setCode(g.getCode());
             node.setName(g.getName());
             node.setParentId(g.getParentId());
+            node.setSortOrder(g.getSortOrder());
             node.setIsDefault(g.getIsDefault());
             node.setWordCount(counts.getOrDefault(g.getId(), 0L));
             nodeMap.put(g.getId(), node);
@@ -123,7 +145,8 @@ public class WordGroupService {
     }
 
     private void sortNodes(List<GroupNodeDTO> nodes) {
-        nodes.sort(Comparator.comparing(GroupNodeDTO::getCode, Comparator.nullsLast(String::compareTo))
+        nodes.sort(Comparator.comparing(GroupNodeDTO::getSortOrder, Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(GroupNodeDTO::getCode, Comparator.nullsLast(String::compareTo))
                 .thenComparing(GroupNodeDTO::getId));
         for (GroupNodeDTO n : nodes) {
             sortNodes(n.getChildren());
@@ -150,10 +173,14 @@ public class WordGroupService {
             ref.setCode(g.getCode());
             ref.setName(g.getName());
             ref.setParentId(g.getParentId());
+            ref.setSortOrder(g.getSortOrder());
             ref.setIsDefault(g.getIsDefault());
             result.computeIfAbsent(m.getWordId(), k -> new ArrayList<>()).add(ref);
         }
-        result.values().forEach(list -> list.sort(Comparator.comparing(GroupNodeDTO::getCode)));
+        result.values().forEach(list -> list.sort(
+                Comparator.comparing(GroupNodeDTO::getSortOrder, Comparator.nullsLast(Integer::compareTo))
+                        .thenComparing(GroupNodeDTO::getCode, Comparator.nullsLast(String::compareTo))
+                        .thenComparing(GroupNodeDTO::getId)));
         return result;
     }
 
@@ -162,6 +189,11 @@ public class WordGroupService {
         return memberRepository.findByWordId(wordId).stream()
                 .map(WordGroupMember::getGroupId)
                 .collect(Collectors.toList());
+    }
+
+    /** 词组是否存在 */
+    public boolean groupExists(Long groupId) {
+        return groupId != null && groupRepository.existsById(groupId);
     }
 
     /** 词组及其所有子孙词组ID（用于按词组筛选单词） */
@@ -191,7 +223,7 @@ public class WordGroupService {
     // ==================== 增删改 ====================
 
     @Transactional
-    public WordGroup create(String code, String name, Long parentId) {
+    public WordGroup create(String code, String name, Long parentId, Integer sortOrder) {
         if (name == null || name.trim().isEmpty()) {
             throw new IllegalArgumentException("词组名称不能为空");
         }
@@ -207,12 +239,13 @@ public class WordGroupService {
         group.setCode(finalCode);
         group.setName(name.trim());
         group.setParentId(parentId);
+        group.setSortOrder(sortOrder != null ? sortOrder : 0);
         group.setIsDefault(false);
         return groupRepository.save(group);
     }
 
     @Transactional
-    public WordGroup update(Long id, String code, String name, Long parentId) {
+    public WordGroup update(Long id, String code, String name, Long parentId, Integer sortOrder) {
         WordGroup group = groupRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("词组不存在"));
 
@@ -239,6 +272,9 @@ public class WordGroupService {
             }
         }
         group.setParentId(parentId);
+        if (sortOrder != null) {
+            group.setSortOrder(sortOrder);
+        }
         return groupRepository.save(group);
     }
 
@@ -330,10 +366,84 @@ public class WordGroupService {
         return validWordIds.size();
     }
 
+    /**
+     * 批量把单词移出指定词组（保留单词本身）。
+     * 移出后无任何归属的单词自动落到默认词组。
+     *
+     * @return 实际处理的单词数
+     */
+    @Transactional
+    public int batchRemoveWordsFromGroup(List<Long> wordIds, Long groupId) {
+        if (wordIds == null || wordIds.isEmpty()) {
+            throw new IllegalArgumentException("请先选择单词");
+        }
+        int count = 0;
+        for (Long wordId : wordRepository.findByIdIn(wordIds).stream()
+                .map(Word::getId).collect(Collectors.toList())) {
+            removeWordFromGroup(wordId, groupId);
+            count++;
+        }
+        log.info("批量移出词组完成：{} 个单词，词组 {}", count, groupId);
+        return count;
+    }
+
     /** 删除单词时清理其词组关联 */
     @Transactional
     public void removeWordMemberships(Long wordId) {
         memberRepository.deleteByWordId(wordId);
+    }
+
+    /**
+     * 彻底删除多个单词：清除单词本体及其所有词组关联
+     *
+     * @return 实际删除的单词数
+     */
+    @Transactional
+    public int purgeWords(List<Long> wordIds) {
+        if (wordIds == null || wordIds.isEmpty()) {
+            throw new IllegalArgumentException("请先选择单词");
+        }
+        List<Long> validIds = wordRepository.findByIdIn(wordIds).stream()
+                .map(Word::getId).collect(Collectors.toList());
+        memberRepository.deleteByWordIdIn(validIds);
+        wordRepository.deleteAllById(validIds);
+        log.info("批量彻底删除单词：{} 个", validIds.size());
+        return validIds.size();
+    }
+
+    /**
+     * 把单词移出指定词组，但保留单词本身。
+     * 若该单词已不属于任何词组，则落到默认词组，保证「至少归属一个词组」的约束。
+     *
+     * @return 剩余词组ID列表
+     */
+    @Transactional
+    public List<Long> removeWordFromGroup(Long wordId, Long groupId) {
+        List<WordGroupMember> current = memberRepository.findByWordId(wordId);
+        List<WordGroupMember> toDelete = current.stream()
+                .filter(m -> groupId != null && groupId.equals(m.getGroupId()))
+                .collect(Collectors.toList());
+        if (!toDelete.isEmpty()) {
+            memberRepository.deleteAll(toDelete);
+            memberRepository.flush();
+        }
+
+        // 移出后无任何归属时落到默认词组
+        List<Long> remaining = memberRepository.findByWordId(wordId).stream()
+                .map(WordGroupMember::getGroupId)
+                .collect(Collectors.toList());
+        if (remaining.isEmpty()) {
+            Long defaultGroupId = getDefaultGroupId();
+            // getDefaultGroupId 内部的补齐逻辑可能已建立该关联，需先查重
+            if (!memberRepository.existsByWordIdAndGroupId(wordId, defaultGroupId)) {
+                WordGroupMember m = new WordGroupMember();
+                m.setWordId(wordId);
+                m.setGroupId(defaultGroupId);
+                memberRepository.save(m);
+            }
+            remaining.add(defaultGroupId);
+        }
+        return remaining;
     }
 
     /** 给一批单词补充关联（跳过已存在的关联），返回新增的关联数 */

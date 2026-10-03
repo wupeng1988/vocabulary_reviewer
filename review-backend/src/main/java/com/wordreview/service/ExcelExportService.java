@@ -51,9 +51,11 @@ public class ExcelExportService {
                 .filter(w -> !groupedWordIds.contains(w.getId()))
                 .collect(Collectors.toList());
 
+        // 每个 Sheet 内按单词 ID 正序（member 表本身无序，不能沿用其遍历顺序）
+        wordsByGroup.values().forEach(list -> list.sort(Comparator.comparing(Word::getId)));
+
         List<WordGroup> groups = groupRepository.findAll().stream()
-                .sorted(Comparator.comparing(WordGroup::getCode, Comparator.nullsLast(String::compareTo))
-                        .thenComparing(WordGroup::getId))
+                .sorted(WordGroupService.GROUP_ORDER)
                 .collect(Collectors.toList());
 
         try (Workbook workbook = new XSSFWorkbook();

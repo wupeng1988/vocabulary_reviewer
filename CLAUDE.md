@@ -18,7 +18,7 @@ vocabulary-review/
 │       ├── WordReviewApplication.java    # 启动类
 │       ├── entity/Word.java              # 单词实体（含 recogOnly 仅认读标记）
 │       ├── entity/ReviewConfig.java      # 复习配置实体
-│       ├── entity/WordGroup.java         # 词组实体（编号/名称/parentId/isDefault，树形）
+│       ├── entity/WordGroup.java         # 词组实体（编号/名称/parentId/sortOrder/isDefault，树形）
 │       ├── entity/WordGroupMember.java   # 单词-词组多对多关联
 │       ├── repository/WordRepository.java
 │       ├── repository/ReviewConfigRepository.java
@@ -78,7 +78,8 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | POST | `/api/words/import` | 上传 Excel (MultipartFile)，需指定 ?groupId= 导入目标词组 |
 | GET | `/api/words/page` | 分页查询 (?page=&size=&keyword=&sortField=&sortOrder=&groupId=，groupId 含子孙词组) |
 | PUT | `/api/words/{id}` | 更新单词内容（生词/音标/含义/例句/例句释义） |
-| DELETE | `/api/words/{id}` | 删除单词（同时清理词组关联） |
+| DELETE | `/api/words/{id}` | 删除单词（同时清理词组关联）；`?mode=group` 则只移出当前词组、保留单词 |
+| DELETE | `/api/words/{id}/group/{groupId}` | 把单词移出指定词组（单词保留；若移出后无任何归属则落到默认词组） |
 | PUT | `/api/words/{id}/recog-only` | 更新仅认读标记 |
 | PUT | `/api/words/{id}/groups` | 覆盖式设置单词所属词组 {groupIds:[...]}（传空回落到默认词组） |
 | POST | `/api/words/batch-groups` | 批量调整选中单词的词组 {wordIds, groupIds, mode: replace/add/remove} |
@@ -96,8 +97,8 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | GET | `/api/audio/batch/status` | 查询批量生成状态（running/idle） |
 | GET | `/api/groups/tree` | 词组树（含每个词组的直接单词数 wordCount） |
 | GET | `/api/groups/default-id` | 内置默认词组ID |
-| POST | `/api/groups` | 新增词组 {code?, name, parentId?}（code 留空自动生成 Gxxx） |
-| PUT | `/api/groups/{id}` | 更新词组 {code, name, parentId}（防成环校验） |
+| POST | `/api/groups` | 新增词组 {code?, name, parentId?, sortOrder?}（code 留空自动生成 Gxxx） |
+| PUT | `/api/groups/{id}` | 更新词组 {code, name, parentId, sortOrder}（防成环校验） |
 | DELETE | `/api/groups/{id}` | 删除词组（默认词组/有子词组不可删） |
 
 ## 核心算法：复习调度（ReviewService.generateReviewList）
@@ -110,13 +111,15 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 ## 关键业务规则
 - **Upsert**: Excel/JSON 导入时 word 已存在则更新内容字段，保留复习统计
 - **词组树**: 词组支持父子树形结构（parentId），编号 code 全局唯一；内置一个「默认词组」(G001, isDefault)
+- **词组排序**: 词组 sortOrder 数值越小越靠前，相同则按 code 升序；全局生效（词组管理树、词组筛选下拉、数据管理导入词组下拉、按词组导出 Excel 的 Sheet 顺序、单词行的词组标签顺序）。旧数据启动时统一补 0
 - **默认归属**: 应用启动时创建默认词组，并把所有无词组归属的单词自动补进默认词组；新增/无目标词组导入的单词默认进默认词组
 - **多对多**: 一个单词可归属于多个词组；词库管理编辑单词或「调整词组」可批量修改归属（覆盖/追加/移除三种模式）
 - **按词组筛选**: 词库管理选择词组后，分页查询包含该词组所有子孙词组的单词
+- **删除单词二选一**: 词库管理删除按钮弹二选一——「从本词组移除」只解除该词组归属、单词保留；若该单词仅属该词组则自动落到默认词组；「彻底删除」清除单词及其全部词组关联和复习统计（有二次确认）
 - **词组删除限制**: 默认词组不可删除；有子词组的词组需先删除子词组；删除成环防护（上级不能是自身子孙）
 - **Excel 导入需选词组**: 数据管理导入 Excel 前必须选择目标词组；已存在的单词只新增关联、不重复创建
 - **Excel 按 Sheet 导出**: 每个词组一个 Sheet（A-E 列同导入格式），未归类单词导出到「未分组」Sheet，空词组不生成 Sheet
-- **JSON 备份 v2**: 导出含词组树（parentCode 引用）和每个单词的 groups(code 数组)；老版本 v1（无词组关系）导入时仅补充默认词组归属，不破坏现有词组
+- **JSON 备份 v2**: 导出含词组树（parentCode 引用、sortOrder）和每个单词的 groups(code 数组)；老版本 v1（无词组关系）导入时仅补充默认词组归属，不破坏现有词组
 - **四阶段复习**: Phase 1 认读(英→中) + Phase 2 拼写练习(显示全部信息+拼写框) + Phase 3 默写(中→英) + Phase 4 听音默写(仅播放音频+拼写)
 - **五种复习模式**: 完整复习(认读+拼写+默写) / 仅认读 / 仅拼写练习 / 仅默写 / 仅听音默写
 - **自定义复习**: 词库管理页面选中单词后可自定义阶段组合（认读/拼写练习/默写/听音默写可复选），跳转到复习中心执行

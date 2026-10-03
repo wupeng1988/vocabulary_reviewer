@@ -6,6 +6,9 @@
           <span style="font-size: 16px; font-weight: bold">🗂️ 词组管理</span>
           <div>
             <el-button size="small" @click="toggleExpandAll">全部{{ expandAll ? '收起' : '展开' }}</el-button>
+            <el-button size="small" :disabled="sortSaving" @click="toggleSortEdit">
+              {{ sortEditing ? '✓ 完成排序编辑' : '⚡ 排序行内编辑' }}
+            </el-button>
             <el-button size="small" type="primary" @click="openAddDialog(null)">➕ 新增根词组</el-button>
           </div>
         </div>
@@ -27,6 +30,25 @@
           </template>
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="260" />
+        <el-table-column prop="sortOrder" label="排序" width="140" align="center">
+          <template #default="{ row }">
+            <template v-if="sortEditing">
+              <el-input-number
+                v-model="row.sortOrder"
+                size="small"
+                :min="0"
+                :max="9999"
+                controls-position="right"
+                style="width: 100px"
+                @change="(v) => saveSort(row, v)"
+              />
+            </template>
+            <template v-else>
+              <el-tag v-if="row.sortOrder" size="small" type="warning">{{ row.sortOrder }}</el-tag>
+              <span v-else style="color: #c0c4cc">0</span>
+            </template>
+          </template>
+        </el-table-column>
         <el-table-column prop="wordCount" label="单词数" width="120" align="center">
           <template #default="{ row }">
             <el-tag type="info" size="small">{{ row.wordCount }}</el-tag>
@@ -46,7 +68,9 @@
       </el-table>
 
       <div style="color: #909399; font-size: 12px; margin-top: 14px">
-        提示：默认词组自动包含所有未归属于任何词组的单词，且不可删除。删除词组前需先删除其下的子词组。
+        提示：默认词组自动包含所有未归属于任何词组的单词，且不可删除。删除词组前需先删除其下的子词组。<br />
+        「排序」数值越小越靠前，词组管理列表、词组筛选、数据管理导入词组和按词组导出 Excel 均按此顺序排列。<br />
+        点击「排序行内编辑」可直接在表格中修改排序值，改动即时保存。
       </div>
     </el-card>
 
@@ -60,6 +84,10 @@
         </el-form-item>
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="词组名称" />
+        </el-form-item>
+        <el-form-item label="排序" required>
+          <el-input-number v-model="form.sortOrder" :min="0" :max="9999" :step="1" controls-position="right" style="width: 160px" />
+          <div style="color: #909399; font-size: 12px">数值越小越靠前，相同则按编号排序</div>
         </el-form-item>
         <el-form-item label="上级词组">
           <el-tree-select
@@ -97,7 +125,16 @@ const tableKey = ref(0)
 
 const loadGroups = async () => {
   try {
-    groupTree.value = await loadGroupTree()
+    const tree = await loadGroupTree()
+    // 记录已保存的排序值，供行内编辑判断是否真的改动
+    const stamp = (nodes) => {
+      ;(nodes || []).forEach(n => {
+        n.__savedSort = n.sortOrder ?? 0
+        stamp(n.children)
+      })
+    }
+    stamp(tree)
+    groupTree.value = tree
   } catch (e) {
     ElMessage.error('加载词组失败')
   }
@@ -108,11 +145,54 @@ const toggleExpandAll = () => {
   tableKey.value++  // 重挂载以应用展开/收起
 }
 
+// ==================== 排序字段行内编辑 ====================
+const sortEditing = ref(false)
+const sortSaving = ref(false)
+
+const toggleSortEdit = () => {
+  if (sortSaving.value) return
+  sortEditing.value = !sortEditing.value
+  if (sortEditing.value) {
+    // 按当前排序值把同级兄弟节点排好，保证输入框顺序与排序值一致
+    sortSiblings(groupTree.value)
+  } else {
+    loadGroups()
+  }
+}
+
+/** 递归按 sortOrder → code 对每层子节点排序 */
+const sortSiblings = (nodes) => {
+  if (!nodes) return
+  nodes.sort((a, b) =>
+    (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+    String(a.code).localeCompare(String(b.code))
+  )
+  nodes.forEach(n => sortSiblings(n.children))
+}
+
+const saveSort = async (row, value) => {
+  const next = Number.isFinite(value) ? value : 0
+  if (next === row.__savedSort) return   // 无变化不请求
+  sortSaving.value = true
+  try {
+    await api.put(`/groups/${row.id}`, { parentId: row.parentId, sortOrder: next })
+    row.__savedSort = next
+    ElMessage.success('排序已更新')
+    // 兄弟顺序可能变化，重新拉取以刷新整棵树
+    await loadGroups()
+  } catch (e) {
+    row.sortOrder = row.__savedSort ?? 0   // 回滚
+    ElMessage.error(e?.response?.data?.message || '排序更新失败')
+  } finally {
+    sortSaving.value = false
+  }
+}
+
 // ==================== 新增 / 编辑 ====================
 const showDialog = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
-const form = ref({ id: null, code: '', name: '', parentId: null, isDefault: false })
+const form = ref({ id: null, code: '', name: '', parentId: null, sortOrder: 0, isDefault: false })
 const editingRow = ref(null)
 
 // 上级词组下拉（编辑时排除自身及其子孙，避免成环）
@@ -141,14 +221,14 @@ const collectDescendantIds = (node, set) => {
 const openAddDialog = (parent) => {
   isEdit.value = false
   editingRow.value = null
-  form.value = { id: null, code: '', name: '', parentId: parent ? parent.id : null, isDefault: false }
+  form.value = { id: null, code: '', name: '', parentId: parent ? parent.id : null, sortOrder: 0, isDefault: false }
   showDialog.value = true
 }
 
 const openEditDialog = (row) => {
   isEdit.value = true
   editingRow.value = row
-  form.value = { id: row.id, code: row.code, name: row.name, parentId: row.parentId, isDefault: row.isDefault }
+  form.value = { id: row.id, code: row.code, name: row.name, parentId: row.parentId, sortOrder: row.sortOrder ?? 0, isDefault: row.isDefault }
   showDialog.value = true
 }
 
@@ -163,14 +243,16 @@ const saveGroup = async () => {
       await api.put(`/groups/${form.value.id}`, {
         code: form.value.code,
         name: form.value.name,
-        parentId: form.value.parentId
+        parentId: form.value.parentId,
+        sortOrder: form.value.sortOrder
       })
       ElMessage.success('更新成功')
     } else {
       await api.post('/groups', {
         code: form.value.code || undefined,
         name: form.value.name,
-        parentId: form.value.parentId
+        parentId: form.value.parentId,
+        sortOrder: form.value.sortOrder
       })
       ElMessage.success('新增成功')
     }

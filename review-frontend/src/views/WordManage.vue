@@ -23,6 +23,7 @@
             :data="groupOptions"
             clearable
             check-strictly
+            default-expand-all
             node-key="value"
             :props="{ value: 'value', label: 'label', children: 'children' }"
             placeholder="按词组筛选（含子词组）"
@@ -65,6 +66,15 @@
             @click="openAdjustDialog"
           >
             🗂️ 调整词组
+          </el-button>
+          <el-button
+            size="small"
+            type="danger"
+            :disabled="selectedWords.length === 0"
+            :loading="batchDeleting"
+            @click="askBatchDelete"
+          >
+            🗑️ 批量删除 ({{ selectedWords.length }})
           </el-button>
           <el-button
             size="small"
@@ -122,7 +132,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="仅认读" width="80" align="center">
+        <el-table-column label="仅认读" width="80" align="center" fixed="right">
           <template #default="{ row }">
             <el-switch
               v-model="row.recogOnly"
@@ -134,11 +144,7 @@
         <el-table-column label="操作" width="130" align="center" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" size="small" link @click="openEditDialog(row)">编辑</el-button>
-            <el-popconfirm title="确定删除该单词？" @confirm="deleteWord(row.id)">
-              <template #reference>
-                <el-button type="danger" size="small" link>删除</el-button>
-              </template>
-            </el-popconfirm>
+            <el-button type="danger" size="small" link @click="askDeleteWord(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -307,7 +313,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { loadGroupTree, toTreeOptions } from '../utils/group'
@@ -374,6 +380,12 @@ const selectedWords = ref([])
 
 const handleSelectionChange = (selection) => {
   selectedWords.value = selection
+}
+
+/** 清空表格勾选（批量操作后调用） */
+const clearSelection = () => {
+  wordTableRef.value?.clearSelection()
+  selectedWords.value = []
 }
 
 // 复习弹窗
@@ -513,13 +525,163 @@ const loadWords = async () => {
   }
 }
 
-const deleteWord = async (id) => {
+// ==================== 删除单词 ====================
+/**
+ * 弹出「从本词组移除 / 从所有词组彻底删除」二选一。
+ * - 从本词组移除：单词本身保留；若它仅属于该词组，后端会把它落到默认词组
+ * - 彻底删除：单词及其所有词组关联、复习统计一并清除，不可恢复
+ */
+const askDeleteWord = async (row) => {
+  const groupCount = (row.groups || []).length
+  const inFilter = filterGroupId.value
+  const scope = inFilter ? '当前筛选的词组' : '词库'
+
+  let msg = `「${row.word}」当前属于 ${groupCount} 个词组，请选择删除方式。`
+  if (inFilter) {
+    msg = groupCount <= 1
+      ? `「${row.word}」仅属于当前筛选的词组。从本词组移除后，它会被自动移入「默认词组」，单词本身保留。`
+      : `「${row.word}」当前属于 ${groupCount} 个词组。确定要从当前筛选的词组移除它吗？`
+  }
+
   try {
-    await api.delete(`/words/${id}`)
-    ElMessage.success('删除成功')
+    const choice = await ElMessageBox.confirm(msg, `从${scope}删除`, {
+      distinguishCancelAndClose: true,
+      confirmButtonText: '从本词组移除',
+      cancelButtonText: '彻底删除单词',
+      type: 'warning',
+      customClass: 'delete-word-box'
+    })
+    if (choice === 'confirm') {
+      await removeFromGroup(row, inFilter)
+    } else {
+      await purgeWord(row)
+    }
+  } catch (e) {
+    // 'cancel' = 选了彻底删除；'close'（点 X/遮罩）= 取消，不做任何事
+    if (e === 'cancel') {
+      await purgeWord(row)
+    }
+  }
+}
+
+/** 从当前词组移除，保留单词 */
+const removeFromGroup = async (row, groupId) => {
+  try {
+    const res = groupId != null
+      ? await api.delete(`/words/${row.id}/group/${groupId}`)
+      : await api.delete(`/words/${row.id}`, { params: { mode: 'group' } })
+    ElMessage.success(res?.message || '已从词组移除')
     loadWords()
   } catch (e) {
-    ElMessage.error('删除失败')
+    ElMessage.error(e?.response?.data?.message || '操作失败')
+  }
+}
+
+/** 从所有词组彻底删除单词 */
+const purgeWord = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `将彻底删除「${row.word}」及其所有词组关联和复习统计，此操作不可恢复。`,
+      '彻底删除确认',
+      { type: 'error', confirmButtonText: '确认删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return   // 用户在二次确认中取消
+  }
+  try {
+    await api.delete(`/words/${row.id}`)
+    ElMessage.success('已彻底删除')
+    loadWords()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '删除失败')
+  }
+}
+
+// ==================== 批量删除 ====================
+const batchDeleting = ref(false)
+
+const askBatchDelete = async () => {
+  const rows = selectedWords.value
+  if (rows.length === 0) {
+    ElMessage.warning('请先选择要删除的单词')
+    return
+  }
+  const inFilter = filterGroupId.value
+  const onlyInFilter = rows.filter(r => (r.groups || []).length <= 1).length
+  const willFallback = inFilter != null ? onlyInFilter : rows.length
+
+  let msg = `已选择 ${rows.length} 个单词，请选择删除方式。`
+  if (inFilter) {
+    msg = willFallback > 0
+      ? `已选择 ${rows.length} 个单词，其中 ${willFallback} 个仅属于当前筛选的词组。` +
+        `从本词组移除后，这些单词会被自动移入「默认词组」，单词本身保留。`
+      : `已选择 ${rows.length} 个单词，确定要从当前筛选的词组移除它们吗？`
+  }
+
+  let choice
+  try {
+    choice = await ElMessageBox.confirm(msg, `批量删除（${rows.length} 个）`, {
+      distinguishCancelAndClose: true,
+      confirmButtonText: '从本词组移除',
+      cancelButtonText: '彻底删除',
+      type: 'warning'
+    })
+  } catch (e) {
+    if (e !== 'cancel') return   // 'close' = 放弃操作
+    choice = 'cancel'
+  }
+  if (choice === 'confirm') {
+    await batchRemoveFromGroup(rows, inFilter)
+  } else {
+    await batchPurgeWords(rows)
+  }
+}
+
+/** 批量从当前词组移除，保留单词 */
+const batchRemoveFromGroup = async (rows, groupId) => {
+  if (batchDeleting.value) return
+  batchDeleting.value = true
+  try {
+    const res = await api.post('/words/batch-delete', {
+      wordIds: rows.map(w => w.id),
+      mode: 'group',
+      groupId: groupId != null ? groupId : undefined
+    })
+    ElMessage.success(res?.message || '已从词组移除')
+    clearSelection()
+    loadWords()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '批量移出失败')
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
+/** 批量从所有词组彻底删除单词 */
+const batchPurgeWords = async (rows) => {
+  try {
+    await ElMessageBox.confirm(
+      `将彻底删除选中的 ${rows.length} 个单词及其所有词组关联和复习统计，此操作不可恢复。`,
+      '彻底删除确认',
+      { type: 'error', confirmButtonText: `确认删除 ${rows.length} 个`, cancelButtonText: '取消' }
+    )
+  } catch {
+    return   // 二次确认取消
+  }
+  if (batchDeleting.value) return
+  batchDeleting.value = true
+  try {
+    const res = await api.post('/words/batch-delete', {
+      wordIds: rows.map(w => w.id),
+      mode: 'word'
+    })
+    ElMessage.success(res?.message || '已彻底删除')
+    clearSelection()
+    loadWords()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '批量删除失败')
+  } finally {
+    batchDeleting.value = false
   }
 }
 
