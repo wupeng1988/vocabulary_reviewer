@@ -42,6 +42,9 @@
             <el-tag :type="phaseTagType" size="large">
               {{ phaseLabel }}
             </el-tag>
+            <el-tag v-if="groupTotal > 1" type="warning" size="large" style="margin-left: 8px">
+              第 {{ currentGroupIndex + 1 }} / {{ groupTotal }} 组
+            </el-tag>
           </el-col>
           <el-col :span="14">
             <el-progress
@@ -392,6 +395,29 @@ const customPhases = ref([])
 
 // 原始词表（从后端获取，不变）
 const originalList = ref([])
+
+/**
+ * 分组复习：groupSize <= 0 表示不分组（现有行为）。
+ * 分组时按 originalList 的顺序切块，每块内走完全部阶段后再进入下一块。
+ */
+const groupSize = ref(0)
+
+/** 当前正在复习的分组（不含仅认读过滤前的原始块） */
+const currentGroupIndex = ref(0)
+
+/** 当前分组的原始单词列表；不分组时即整个列表 */
+const groupList = computed(() => {
+  if (!groupSize.value || groupSize.value < 1) return originalList.value
+  const start = currentGroupIndex.value * groupSize.value
+  return originalList.value.slice(start, start + groupSize.value)
+})
+
+/** 分组总数 */
+const groupTotal = computed(() =>
+  !groupSize.value || groupSize.value < 1
+    ? 1
+    : Math.max(1, Math.ceil(originalList.value.length / groupSize.value))
+)
 // 当前正在操作的词表（默写阶段会变成错词子集）
 const activeList = ref([])
 
@@ -616,8 +642,8 @@ const goToNextPhase = (currentPhase) => {
   const phases = customPhases.value
   const idx = phases.indexOf(currentPhase)
   if (idx === -1 || idx >= phases.length - 1) {
-    // 没有下一个阶段了，复习完成
-    showResult.value = true
+    // 没有下一个阶段了：进入下一分组或结束
+    finishGroup()
     return
   }
   const nextPhase = phases[idx + 1]
@@ -630,11 +656,51 @@ const goToNextPhase = (currentPhase) => {
   } else if (nextPhase === 'recog') {
     // 不太可能，但处理一下
     phase.value = 'recog'
-    activeList.value = [...originalList.value]
+    activeList.value = [...groupList.value]
     currentIndex.value = 0
     recogAnswered.value = false
     recogFlashClass.value = ''
     autoPlayOnWordChange(activeList.value[0]?.word)
+  }
+}
+
+/**
+ * 当前分组的最后一个阶段走完。
+ * 还有下一组则推进到下一组的第一个阶段，否则结束复习。
+ * 不分组时 groupTotal 恒为 1，行为与原先一致。
+ */
+const finishGroup = () => {
+  if (currentGroupIndex.value < groupTotal.value - 1) {
+    currentGroupIndex.value++
+    startGroupFromFirstPhase()
+    return
+  }
+  showResult.value = true
+}
+
+/** 从当前模式的第一个阶段重新开始（用于进入下一分组） */
+const startGroupFromFirstPhase = () => {
+  const first = reviewMode.value === 'custom'
+    ? customPhases.value[0]
+    : ['recog', 'practice', 'spell', 'dictation'].includes(reviewMode.value)
+      ? reviewMode.value
+      : 'recog'
+
+  ElMessage.info(`第 ${currentGroupIndex.value + 1} / ${groupTotal.value} 组开始`)
+
+  if (first === 'recog') {
+    phase.value = 'recog'
+    activeList.value = [...groupList.value]
+    currentIndex.value = 0
+    recogAnswered.value = false
+    recogFlashClass.value = ''
+    autoPlayOnWordChange(activeList.value[0]?.word)
+  } else if (first === 'practice') {
+    enterPracticePhase()
+  } else if (first === 'spell') {
+    enterSpellPhase()
+  } else if (first === 'dictation') {
+    enterDictationPhase()
   }
 }
 
@@ -664,7 +730,7 @@ const saveConfig = async () => {
 // 开始复习，mode: 'both' | 'recog' | 'practice' | 'spell' | 'dictation' | 'custom'
 // customPhases: 当 mode='custom' 时，指定要进行的阶段列表，如 ['recog', 'spell']
 // wordIds: 当从词库管理指定单词复习时，传入单词ID列表
-const startReview = async (mode, phases = [], wordIds = []) => {
+const startReview = async (mode, phases = [], wordIds = [], groupSizeParam = 0) => {
   loading.value = true
   try {
     let res
@@ -684,6 +750,9 @@ const startReview = async (mode, phases = [], wordIds = []) => {
     currentIndex.value = 0
     reviewMode.value = mode
     customPhases.value = phases
+    // 分组复习：groupSize <= 0 表示不分组
+    groupSize.value = Number(groupSizeParam) >= 1 ? Number(groupSizeParam) : 0
+    currentGroupIndex.value = 0
 
     // 根据模式设置初始阶段
     if (mode === 'custom') {
@@ -691,14 +760,14 @@ const startReview = async (mode, phases = [], wordIds = []) => {
       const firstPhase = phases[0]
       if (firstPhase === 'spell') {
         phase.value = 'spell'
-        activeList.value = res.filter(w => !w.recogOnly)
+        activeList.value = groupList.value.filter(w => !w.recogOnly)
         if (activeList.value.length === 0) {
           ElMessage.info('所有单词均为仅认读，无需默写')
           loading.value = false
           return
         }
       } else if (firstPhase === 'dictation') {
-        activeList.value = res.filter(w => !w.recogOnly)
+        activeList.value = groupList.value.filter(w => !w.recogOnly)
         if (activeList.value.length === 0) {
           ElMessage.info('所有单词均为仅认读，无需听音默写')
           loading.value = false
@@ -706,7 +775,7 @@ const startReview = async (mode, phases = [], wordIds = []) => {
         }
         phase.value = 'dictation'
       } else if (firstPhase === 'practice') {
-        activeList.value = res.filter(w => !w.recogOnly)
+        activeList.value = groupList.value.filter(w => !w.recogOnly)
         if (activeList.value.length === 0) {
           ElMessage.info('所有单词均为仅认读，无需拼写练习')
           loading.value = false
@@ -716,12 +785,12 @@ const startReview = async (mode, phases = [], wordIds = []) => {
       } else {
         // recog
         phase.value = 'recog'
-        activeList.value = [...res]
+        activeList.value = [...groupList.value]
       }
     } else if (mode === 'spell') {
       phase.value = 'spell'
       // 仅默写模式：过滤掉仅认读的词
-      activeList.value = res.filter(w => !w.recogOnly)
+      activeList.value = groupList.value.filter(w => !w.recogOnly)
       if (activeList.value.length === 0) {
         ElMessage.info('所有单词均为仅认读，无需默写')
         loading.value = false
@@ -729,7 +798,7 @@ const startReview = async (mode, phases = [], wordIds = []) => {
       }
     } else if (mode === 'practice') {
       // 仅拼写练习模式：直接进入拼写练习
-      activeList.value = res.filter(w => !w.recogOnly)
+      activeList.value = groupList.value.filter(w => !w.recogOnly)
       if (activeList.value.length === 0) {
         ElMessage.info('所有单词均为仅认读，无需拼写练习')
         loading.value = false
@@ -738,7 +807,7 @@ const startReview = async (mode, phases = [], wordIds = []) => {
       phase.value = 'practice'
     } else if (mode === 'dictation') {
       // 仅听音默写模式：直接进入听音默写
-      activeList.value = res.filter(w => !w.recogOnly)
+      activeList.value = groupList.value.filter(w => !w.recogOnly)
       if (activeList.value.length === 0) {
         ElMessage.info('所有单词均为仅认读，无需听音默写')
         loading.value = false
@@ -747,7 +816,7 @@ const startReview = async (mode, phases = [], wordIds = []) => {
       phase.value = 'dictation'
     } else {
       phase.value = 'recog'
-      activeList.value = [...res]
+      activeList.value = [...groupList.value]
     }
 
     recogAnswered.value = false
@@ -826,8 +895,8 @@ const recogNext = () => {
   } else {
     // 认读全部完成
     if (reviewMode.value === 'recog') {
-      // 仅认读模式，直接结束
-      showResult.value = true
+      // 仅认读模式，进入下一分组或结束
+      finishGroup()
     } else if (reviewMode.value === 'custom') {
       // 自定义模式，进入下一个阶段
       goToNextPhase('recog')
@@ -853,10 +922,14 @@ const recogPrev = () => {
 const enterPracticePhase = () => {
   phase.value = 'practice'
   // 过滤掉仅认读的词
-  activeList.value = originalList.value.filter(w => !w.recogOnly)
+  activeList.value = groupList.value.filter(w => !w.recogOnly)
   if (activeList.value.length === 0) {
-    // 没有需要拼写练习的词，直接进入默写阶段
-    enterSpellPhase()
+    // 没有需要拼写练习的词，继续下一阶段
+    if (reviewMode.value === 'custom') {
+      goToNextPhase('practice')
+    } else {
+      enterSpellPhase()
+    }
     return
   }
   currentIndex.value = 0
@@ -922,8 +995,8 @@ const practiceNext = () => {
   } else {
     // 拼写练习完成
     if (reviewMode.value === 'practice') {
-      // 仅拼写练习模式，直接结束
-      showResult.value = true
+      // 仅拼写练习模式，进入下一分组或结束
+      finishGroup()
     } else if (reviewMode.value === 'custom') {
       // 自定义模式，进入下一个阶段
       goToNextPhase('practice')
@@ -939,10 +1012,14 @@ const practiceNext = () => {
 const enterSpellPhase = () => {
   phase.value = 'spell'
   // 过滤掉仅认读的词
-  activeList.value = originalList.value.filter(w => !w.recogOnly)
+  activeList.value = groupList.value.filter(w => !w.recogOnly)
   if (activeList.value.length === 0) {
-    // 没有需要默写的词，复习完成
-    showResult.value = true
+    // 没有需要默写的词，进入下一分组或结束
+    if (reviewMode.value === 'custom') {
+      goToNextPhase('spell')
+    } else {
+      finishGroup()
+    }
     return
   }
   currentIndex.value = 0
@@ -1046,15 +1123,18 @@ const startNextSpellRound = () => {
     // 全部正确，检查是否还有下一个自定义阶段
     if (reviewMode.value === 'custom' && phase.value !== 'dictation') {
       goToNextPhase(phase.value)
+    } else if (reviewMode.value === 'custom') {
+      // dictation 是自定义模式的最后一个阶段
+      finishGroup()
     } else {
-      showResult.value = true
+      finishGroup()
     }
     return
   }
 
   // 有错词，进入下一轮
   spellRound.value++
-  activeList.value = wrongWords.map(id => originalList.value.find(w => w.id === id)).filter(Boolean)
+  activeList.value = wrongWords.map(id => groupList.value.find(w => w.id === id)).filter(Boolean)
   currentIndex.value = 0
   spellInput.value = ''
   spellFeedback.value = ''
@@ -1079,10 +1159,14 @@ const startNextSpellRound = () => {
 const enterDictationPhase = () => {
   phase.value = 'dictation'
   // 过滤掉仅认读的词
-  activeList.value = originalList.value.filter(w => !w.recogOnly)
+  activeList.value = groupList.value.filter(w => !w.recogOnly)
   if (activeList.value.length === 0) {
-    // 没有需要听音默写的词，复习完成
-    showResult.value = true
+    // 没有需要听音默写的词，进入下一分组或结束
+    if (reviewMode.value === 'custom') {
+      goToNextPhase('dictation')
+    } else {
+      finishGroup()
+    }
     return
   }
   currentIndex.value = 0
@@ -1228,19 +1312,20 @@ onMounted(() => {
   // 检查是否从词库管理跳转过来，带有指定单词ID和阶段
   const queryIds = route.query.ids
   const queryPhases = route.query.phases
+  const queryGroupSize = Number(route.query.groupSize) >= 1 ? Number(route.query.groupSize) : 0
   if (queryIds && queryPhases) {
     const ids = String(queryIds).split(',').map(Number).filter(n => !isNaN(n))
     const phases = String(queryPhases).split(',').filter(p => ['recog', 'practice', 'spell', 'dictation'].includes(p))
     if (ids.length > 0 && phases.length > 0) {
       // 确定模式：如果只选了一个阶段，用单阶段模式；recog+practice+spell 三阶段用 both；其他组合用 custom
       if (phases.length === 1) {
-        startReview(phases[0], phases, ids)
+        startReview(phases[0], phases, ids, queryGroupSize)
       } else if (phases.length === 3 && phases[0] === 'recog' && phases[1] === 'practice' && phases[2] === 'spell') {
         // 经典三阶段 = 完整复习
-        startReview('both', phases, ids)
+        startReview('both', phases, ids, queryGroupSize)
       } else {
         // 包含听音默写或其他组合，使用自定义模式
-        startReview('custom', phases, ids)
+        startReview('custom', phases, ids, queryGroupSize)
       }
     }
   }

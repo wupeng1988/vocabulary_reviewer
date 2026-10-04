@@ -42,6 +42,9 @@
             <el-button :type="hideExampleMeaning ? 'warning' : 'default'" size="small" @click="hideExampleMeaning = !hideExampleMeaning">
               {{ hideExampleMeaning ? '显示例句释义' : '隐藏例句释义' }}
             </el-button>
+            <el-button :type="hideWord ? 'warning' : 'default'" size="small" @click="hideWord = !hideWord">
+              {{ hideWord ? '显示单词' : '隐藏单词' }}
+            </el-button>
           </span>
           <span style="color: #909399">共 {{ totalElements }} 个单词</span>
         </el-col>
@@ -93,13 +96,21 @@
       <el-table ref="wordTableRef" :data="words" stripe border style="width: 100%" @selection-change="handleSelectionChange" @sort-change="handleSortChange">
         <el-table-column type="selection" width="50" align="center" />
         <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom" />
-        <el-table-column prop="word" label="生词" width="150" />
+        <el-table-column prop="word" label="生词" width="150">
+          <template #default="{ row }">
+            <span v-if="!hideWord">{{ row.word }}</span>
+            <span v-else style="color: #c0c4cc">***</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="phonetic" label="音标" width="200">
           <template #default="{ row }">
-            <el-button link size="small" @click="playWordAudio(row.word)" style="margin-right: 4px">
-              🔊
-            </el-button>
-            {{ row.phonetic }}
+            <template v-if="!hideWord">
+              <el-button link size="small" @click="playWordAudio(row.word)" style="margin-right: 4px">
+                🔊
+              </el-button>
+              {{ row.phonetic }}
+            </template>
+            <span v-else style="color: #c0c4cc">***</span>
           </template>
         </el-table-column>
         <el-table-column prop="meaning" label="含义" min-width="200" show-overflow-tooltip>
@@ -108,7 +119,12 @@
             <span v-else style="color: #c0c4cc">***</span>
           </template>
         </el-table-column>
-        <el-table-column prop="exampleSentence" label="例句" min-width="250" show-overflow-tooltip />
+        <el-table-column prop="exampleSentence" label="例句" min-width="250" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="!hideWord">{{ row.exampleSentence }}</span>
+            <span v-else style="color: #c0c4cc">***</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="exampleMeaning" label="例句释义" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="!hideExampleMeaning">{{ row.exampleMeaning }}</span>
@@ -280,26 +296,62 @@
     </el-dialog>
 
     <!-- 复习阶段选择弹窗 -->
-    <el-dialog v-model="showReviewDialog" title="📖 选择复习阶段" width="360px" :close-on-click-modal="false">
+    <el-dialog v-model="showReviewDialog" title="📖 选择复习阶段" width="440px" :close-on-click-modal="false">
       <div style="padding: 10px 0">
         <p style="margin-bottom: 16px; color: #606266">已选择 <strong>{{ selectedWords.length }}</strong> 个单词，请选择复习阶段：</p>
         <div style="display: flex; flex-direction: column; gap: 16px">
-          <el-checkbox v-model="reviewPhases.recog" size="large" border style="padding: 12px 16px; width: 298px">
+          <el-checkbox v-model="reviewPhases.recog" size="large" border style="padding: 12px 16px; width: 100%">
             <span style="font-size: 16px">📖 认读</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">英→中，看词识义</span>
           </el-checkbox>
-          <el-checkbox v-model="reviewPhases.practice" size="large" border style="padding: 12px 16px; width: 298px">
+          <el-checkbox v-model="reviewPhases.practice" size="large" border style="padding: 12px 16px; width: 100%">
             <span style="font-size: 16px">✏️ 拼写练习</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">显示信息+拼写</span>
           </el-checkbox>
-          <el-checkbox v-model="reviewPhases.spell" size="large" border style="padding: 12px 16px; width: 298px">
+          <el-checkbox v-model="reviewPhases.spell" size="large" border style="padding: 12px 16px; width: 100%">
             <span style="font-size: 16px">✍️ 默写</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">中→英，看义写词</span>
           </el-checkbox>
-          <el-checkbox v-model="reviewPhases.dictation" size="large" border style="padding: 12px 16px; width: 298px">
+          <el-checkbox v-model="reviewPhases.dictation" size="large" border style="padding: 12px 16px; width: 100%">
             <span style="font-size: 16px">🎧 听音默写</span>
             <span style="color: #909399; margin-left: 8px; font-size: 13px">仅凭音频拼写</span>
           </el-checkbox>
+        </div>
+      </div>
+      <!-- 分组复习 -->
+      <el-divider style="margin: 16px 0 12px" />
+      <div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px">
+          <span style="color: #606266; white-space: nowrap">分组</span>
+          <el-switch v-model="groupEnabled" />
+          <span v-if="groupEnabled" style="color: #606266; font-size: 13px">分组复习</span>
+        </div>
+        <div v-if="groupEnabled" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px">
+          <span style="color: #606266; white-space: nowrap">每组</span>
+          <el-input-number
+            v-model="groupSize"
+            :min="1"
+            :max="9999"
+            size="default"
+            controls-position="right"
+            style="width: 110px"
+          />
+          <span style="color: #606266; white-space: nowrap">个单词</span>
+          <el-radio-group v-model="groupSize" size="small">
+            <el-radio-button :value="10">10</el-radio-button>
+            <el-radio-button :value="20">20</el-radio-button>
+            <el-radio-button :value="50">50</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div style="color: #909399; font-size: 12px; line-height: 1.6">
+          <template v-if="groupEnabled">
+            共 <strong>{{ groupSize }}</strong> 个单词一组，划分为
+            <strong>{{ groupCount }}</strong> 组；每组内先认读 → 拼写练习 → 默写 → 听音默写，
+            一组全部阶段走完后再进入下一组。
+          </template>
+          <template v-else>
+            不分组：先认读全部 {{ selectedWords.length }} 个单词，再拼写练习全部，再默写全部，再听音默写全部。
+          </template>
         </div>
       </div>
       <template #footer>
@@ -326,6 +378,8 @@ const pageSize = ref(50)
 const totalElements = ref(0)
 const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
+// 隐藏生词、音标、例句（配合「复习」使用，避免直接看到答案）
+const hideWord = ref(false)
 const batchRunning = ref(false)
 const batchChecking = ref(false)
 
@@ -391,6 +445,19 @@ const clearSelection = () => {
 // 复习弹窗
 const showReviewDialog = ref(false)
 const reviewPhases = ref({ recog: true, practice: true, spell: true, dictation: true })
+// 分组复习：groupEnabled=false 即不分组（现有行为）
+const groupEnabled = ref(false)
+const groupSize = ref(50)
+
+/** 实际每组数量：小于 1 时退回全部单词（即不分组） */
+const effectiveGroupSize = computed(() =>
+  groupEnabled.value && groupSize.value >= 1 ? groupSize.value : selectedWords.value.length
+)
+
+/** 分组数 */
+const groupCount = computed(() =>
+  Math.max(1, Math.ceil(selectedWords.value.length / effectiveGroupSize.value))
+)
 
 const openReviewDialog = () => {
   if (selectedWords.value.length === 0) {
@@ -413,8 +480,10 @@ const startSelectedReview = () => {
     return
   }
   const ids = selectedWords.value.map(w => w.id).join(',')
+  // groupSize 传 0 表示不分组
+  const gs = groupEnabled.value && groupSize.value >= 1 ? groupSize.value : 0
   showReviewDialog.value = false
-  router.push({ path: '/review', query: { ids, phases: phases.join(',') } })
+  router.push({ path: '/review', query: { ids, phases: phases.join(','), groupSize: String(gs) } })
 }
 
 // 轮询批量生成状态
