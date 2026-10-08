@@ -13,7 +13,7 @@
 vocabulary-review/
 ├── review-backend/                    # Spring Boot 后端
 │   ├── pom.xml
-│   ├── audio/                         # TTS 音频文件缓存（运行时生成，不入库）
+│   ├── audio/                         # TTS 音频缓存（约 4187 个 mp3 / 49MB，已入版本库）
 │   └── src/main/java/com/wordreview/
 │       ├── WordReviewApplication.java    # 启动类
 │       ├── entity/Word.java              # 单词实体（含 recogOnly 仅认读标记）
@@ -37,6 +37,7 @@ vocabulary-review/
 │       ├── controller/StatsController.java       # /api/stats/*
 │       ├── controller/AudioController.java       # /api/audio/*
 │       ├── controller/WordGroupController.java   # /api/groups/*
+│       ├── config/SpaFallbackConfig.java          # 发布包 SPA 路由回退过滤器（dev 环境自动跳过）
 │       └── dto/                                  # 请求/响应 DTO
 ├── review-frontend/                   # Vue 3 前端
 │   ├── vite.config.js                 # 含 /api、/audio 代理到 localhost:8080
@@ -53,6 +54,8 @@ vocabulary-review/
 │           ├── DataManage.vue         # 数据管理（JSON导入导出+Excel导入需选词组+按Sheet导出）
 │           └── StatsDashboard.vue    # 统计看板（卡片+ECharts图表）
 ├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
+├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip)，产物在 release/
+├── packaging/                         # 发布包内的启动脚本与说明文档（start.sh/start.bat/README.txt/README.md/application.properties）
 └── 本地智能单词复习系统.md             # 需求文档
 ```
 
@@ -71,6 +74,25 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 ./dev.sh status    # 查看运行状态
 ```
 访问 http://localhost:5173
+
+## 发布打包（分发给无开发环境的用户）
+```bash
+./release.sh              # 完整包（含内置 JRE）→ release/WordReviewPro-<版本>-<系统>-<架构>.zip
+./release.sh --no-jre     # 只有 jar + 启动脚本，对方需自装 Java 11+
+./release.sh --no-zip     # 只出目录不压缩
+```
+包结构：`WordReviewPro.jar`（后端 + 前端静态页）+ `jre/`（jlink 裁剪运行时）+ `Start.command`/`start.sh`/`start.bat` + `README.txt`（速查）+ `README.md`（小白上手指南）。对方解压后双击即可，浏览器自动打开 http://localhost:8080。
+
+打包链路与约束：
+- `npm run build` → `review-frontend/dist`，由 **pom 的 `release` profile** 作为额外资源并入 `BOOT-INF/classes/static/`
+- **该 profile 不激活就完全不生效**：`./dev.sh start` 依旧是后端 8080 + 前端 5173 两服务，行为不变
+- `SpaFallbackConfig`（`config/` 包）：非 `/api`、非 `/h2-console`、无扩展名的 GET 请求回退到 `index.html`，支撑 history 路由刷新；**没有 `static/index.html` 时直接放行**，开发环境等同改动前。类名不能与 `@Bean` 方法同名，否则 `BeanDefinitionOverrideException` 启动失败
+- `release.sh` 结束时执行 `mvn clean`，避免 `target/classes/static` 残留污染后续 `spring-boot:run`
+- jlink 模块列表见 `release.sh`，只在同架构系统上可生成 → **在谁的机器上打包就只能给谁用**
+- 单机单用户：`~/worddb` 为 H2 文件库，**同一时间只能跑一个实例**，与 dev 实例并存会报 `The file is locked`
+- 发布包不内置 `audio/` 缓存（49MB 且是用户自己的词），首次运行按需联网生成
+- **端口可改**：包根目录 `application.properties`（`server.port=`，默认 8080）。启动脚本解析它做端口占用检测/就绪探测/开浏览器，并传 `--server.port`（**必须在 `-jar` 之后**，放前面 JVM 会报 `Unrecognized option`）；Spring 自身也读 `file:./application.properties` 覆盖 jar 内 `application.yml`。脚本内**不硬编码端口**；dev 侧 `vite.config.js` proxy 仍写死 8080
+- 包内文件名一律 ASCII（`Start.command`/`README.txt`/`README.md`）：macOS 的 `zip` 不设 UTF-8 文件名标志，中文名在 Windows 解压会变乱码；`release.sh` 构建后用 python3 校验非 ASCII 文件名并失败退出
 
 ## API 接口
 | 方法 | 路径 | 功能 |
@@ -147,7 +169,7 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - Excel A-E 列严格映射: 生词/音标/含义/例句/例句释义
 - Excel 导出格式与导入一致，A-E 列 + 标题行，按 ID 正序
 - CORS 已全局开放，Vite 通过 proxy 转发 /api 和 /audio 请求
-- 音频目录 `review-backend/audio/` 已加入 .gitignore，不入版本库
+- 音频目录 `review-backend/audio/` **已入版本库**（4187 个 mp3 / 49MB，无 ignore 规则）；发布包不内置 audio，用户首次运行按需联网生成
 - 词库管理页面支持编辑单词（生词、音标、含义、例句、例句释义、所属词组），修改生词时后端检测重名冲突
 - 词库管理表格支持 ID 列服务端排序（sortable="custom"，sortField/sortOrder 参数传后端）
 - 词库管理表格左侧有复选框，选中后可「调整词组」或点击复习按钮自定义阶段复习

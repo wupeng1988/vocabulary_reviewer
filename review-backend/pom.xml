@@ -82,4 +82,27 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- 发布打包专用 profile：把前端构建产物并入 jar，平时开发不受影响。
+         仅 release.sh 通过 mvn -Prelease package 激活。 -->
+    <profiles>
+        <profile>
+            <id>release</id>
+            <build>
+                <finalName>WordReviewPro</finalName>
+                <resources>
+                    <resource>
+                        <directory>src/main/resources</directory>
+                    </resource>
+                    <resource>
+                        <directory>${project.basedir}/../review-frontend/dist</directory>
+                        <targetPath>static</targetPath>
+                        <includes>
+                            <include>**/*</include>
+                        </includes>
+                    </resource>
+                </resources>
+            </build>
+        </profile>
+    </profiles>
 </project>
