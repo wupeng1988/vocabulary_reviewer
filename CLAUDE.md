@@ -150,6 +150,9 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **拼写校验**: 忽略大小写与首尾空格，Unicode 连字符统一归一化为普通连字符 (U+002D)
 - **默写正确率统计**: 仅统计第一轮默写首次尝试结果，重复尝试不覆盖
 - **防重入**: 拼写练习、默写和听音默写阶段，正确后等待自动跳转期间忽略后续回车
+- **键盘快捷键**: 拼写练习/默写输入框 Enter 提交，**Shift+Enter 播放当前单词发音且不提交**
+  （Vue 的 `@keyup.enter` 只看按键不看修饰键，Shift+Enter 也会命中，必须在处理器里用 `e.shiftKey` 分流，
+  见 `onPracticeEnter` / `onSpellEnter`）；认读阶段 ← 上一个、→ 下一个（已作答后生效）、Enter = 认识 / 下一个
 - **H2 Console**: http://localhost:8080/h2-console (JDBC URL: jdbc:h2:~/worddb, user: sa, password: 空)
 
 ## 音频发音系统

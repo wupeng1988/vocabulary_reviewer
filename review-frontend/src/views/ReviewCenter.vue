@@ -159,9 +159,12 @@
                 size="large"
                 placeholder="请拼写上方单词..."
                 style="font-size: 20px; max-width: 400px"
-                @keyup.enter="checkPractice"
+                @keyup.enter="onPracticeEnter"
                 @keydown.delete="onPracticeDelete"
               />
+              <div class="shortcut-hint">
+                <kbd>Enter</kbd> 提交答案<span class="sep">·</span><kbd>Shift + Enter</kbd> 再听一遍发音
+              </div>
             </div>
 
             <!-- 拼写结果反馈 -->
@@ -221,9 +224,12 @@
                 size="large"
                 placeholder="请输入英文单词..."
                 style="font-size: 20px; max-width: 400px"
-                @keyup.enter="checkSpelling"
+                @keyup.enter="onSpellEnter"
                 @keydown.delete="onSpellDelete"
               />
+              <div class="shortcut-hint">
+                <kbd>Enter</kbd> 提交答案<span class="sep">·</span><kbd>Shift + Enter</kbd> 再听一遍发音
+              </div>
             </div>
 
             <!-- 拼写结果反馈：不自动消失，用户按删除键时清空 -->
@@ -952,6 +958,22 @@ const onPracticeDelete = (e) => {
   }
 }
 
+/**
+ * 拼写练习输入框回车处理：
+ * - Enter：提交校验
+ * - Shift + Enter：播放当前单词发音，不提交
+ *
+ * 不能只靠 @keyup.enter 的修饰符：Vue 的 .enter 只看按键本身、不看修饰键，
+ * Shift+Enter 同样会命中，所以必须在这里用 shiftKey 分流。
+ */
+const onPracticeEnter = (e) => {
+  if (e.shiftKey) {
+    playWordAudio(currentWord.value?.word)
+    return
+  }
+  checkPractice()
+}
+
 const checkPractice = () => {
   // 防重入：正确后等待自动跳转期间，忽略后续回车
   if (practiceFeedback.value === 'correct') return
@@ -1042,6 +1064,22 @@ const onSpellDelete = (e) => {
     spellFeedback.value = ''
     spellShowWrong.value = false
   }
+}
+
+/**
+ * 默写输入框回车处理：
+ * - Enter：提交校验
+ * - Shift + Enter：播放当前单词发音，不提交
+ *
+ * 同 onPracticeEnter：@keyup.enter 不区分修饰键，需在此分流。
+ * 默写阶段不自动播放，Shift+Enter 正好用来手动重听。
+ */
+const onSpellEnter = (e) => {
+  if (e.shiftKey) {
+    playWordAudio(currentWord.value?.word)
+    return
+  }
+  checkSpelling()
 }
 
 const checkSpelling = async () => {
@@ -1365,6 +1403,33 @@ onUnmounted(() => {
 
 .spell-wrong :deep(.el-input__wrapper) {
   box-shadow: 0 0 0 1px #F56C6C inset !important;
+}
+
+/* 输入框下方的快捷键小字提示 */
+.shortcut-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 20px;
+  color: #909399;
+  user-select: none;
+}
+
+.shortcut-hint kbd {
+  display: inline-block;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #606266;
+  background: #f4f4f5;
+  border: 1px solid #dcdfe6;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+.shortcut-hint .sep {
+  margin: 0 6px;
+  color: #c0c4cc;
 }
 
 .fade-enter-active {
