@@ -1,9 +1,11 @@
 package com.wordreview.controller;
 
+import com.wordreview.dto.AiWordDTO;
 import com.wordreview.dto.GroupNodeDTO;
 import com.wordreview.dto.WordPageResponse;
 import com.wordreview.entity.Word;
 import com.wordreview.repository.WordRepository;
+import com.wordreview.service.AiParseService;
 import com.wordreview.service.AudioGenerationTaskService;
 import com.wordreview.service.DataExportImportService;
 import com.wordreview.service.ExcelExportService;
@@ -35,6 +37,34 @@ public class WordController {
     private final WordRepository wordRepository;
     private final WordGroupService wordGroupService;
     private final AudioGenerationTaskService audioGenerationTaskService;
+    private final AiParseService aiParseService;
+
+    /**
+     * 允许排序的字段白名单：前端传来的 sortField -> 实体属性名。
+     * 新增可排序列时记得同步补上，否则接口会返回 400「不支持的排序字段」。
+     */
+    private static final Map<String, String> SORT_FIELD_WHITELIST = new HashMap<>();
+
+    static {
+        SORT_FIELD_WHITELIST.put("id", "id");
+        SORT_FIELD_WHITELIST.put("word", "wordLower");      // 生词：小写化后再排，避免大小写打乱字母序
+        SORT_FIELD_WHITELIST.put("phonetic", "phonetic");
+        SORT_FIELD_WHITELIST.put("meaning", "meaning");
+        SORT_FIELD_WHITELIST.put("reviewTotal", "reviewTotal");
+    }
+
+    /**
+     * 参数类错误统一转成 400。
+     * 没有这个的话，排序白名单校验抛出的 IllegalArgumentException 会掉进 500，
+     * 前端拿到的是一句没有上下文的「Internal Server Error」。
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException e) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        result.put("message", e.getMessage());
+        return ResponseEntity.badRequest().body(result);
+    }
 
     /** 上传 Excel 并解析入库（groupId：导入到指定词组） */
     @PostMapping("/import")
@@ -73,9 +103,15 @@ public class WordController {
             @RequestParam(defaultValue = "asc") String sortOrder,
             @RequestParam(required = false) Long groupId) {
 
-        // 前端页码从1开始，JPA从0开始
+        // 前端页码从1开始，JPA从0开始。
+        // sortField 来自请求参数，必须走白名单：既挡住非法属性名，也把 UI 字段名映射到实体字段
+        //（生词列映射到 wordLower，走 LOWER(word) 做不区分大小写的字母序）。
+        String entityField = SORT_FIELD_WHITELIST.get(sortField == null ? "" : sortField.trim());
+        if (entityField == null) {
+            throw new IllegalArgumentException("不支持的排序字段: " + sortField);
+        }
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
-        PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(direction, sortField));
+        PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(direction, entityField));
 
         String trimmedKeyword = (keyword != null && !keyword.trim().isEmpty()) ? keyword.trim() : null;
         List<Long> groupIds = groupId != null ? wordGroupService.getGroupAndDescendantIds(groupId) : null;
@@ -442,6 +478,142 @@ public class WordController {
             result.put("success", false);
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
+     * 批量AI解析添加。
+     *
+     * 入参 words 可能重复、可能带复数/过去式/-ing 等变形、甚至有拼写错误。
+     * 处理顺序：
+     *   1. 先在输入内部去重（保留首次出现的大小写）
+     *   2. 排除词库中已存在的单词
+     *   3. 把剩下的交给 AI，要求返回词典原形 lemma 及音标/全部释义/雅思例句/例句翻译
+     *   4. 只用 lemma 入库；若 lemma 纠正后已存在（含本批次内重复），也计入「词库已包含」
+     *
+     * AI 解析全部完成后才开始入库，中途失败不会留下半截数据。
+     */
+    @PostMapping("/batch-ai")
+    public ResponseEntity<Map<String, Object>> batchAiAdd(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            if (!(body.get("words") instanceof List)) {
+                result.put("success", false);
+                result.put("message", "请输入要解析的单词");
+                return ResponseEntity.badRequest().body(result);
+            }
+
+            // 收集非空行
+            List<String> raw = new ArrayList<>();
+            for (Object v : (List<?>) body.get("words")) {
+                if (v == null) continue;
+                String w = v.toString().trim();
+                if (!w.isEmpty()) raw.add(w);
+            }
+            if (raw.isEmpty()) {
+                result.put("success", false);
+                result.put("message", "请输入要解析的单词");
+                return ResponseEntity.badRequest().body(result);
+            }
+
+            // 1. 输入内部去重（小写比对，保留首次出现的原样大小写）
+            Map<String, String> unique = new LinkedHashMap<>();
+            for (String w : raw) {
+                unique.putIfAbsent(w.toLowerCase(Locale.ROOT), w);
+            }
+            int duplicateCount = raw.size() - unique.size();
+
+            // 2. 排除词库已有单词
+            Set<String> existing = new HashSet<>(wordRepository.findAllWords()); // 已是小写
+            List<String> pending = new ArrayList<>();
+            int existingCount = 0;
+            for (String w : unique.values()) {
+                if (existing.contains(w.toLowerCase(Locale.ROOT))) {
+                    existingCount++;
+                } else {
+                    pending.add(w);
+                }
+            }
+
+            int added = 0;
+            int failed = 0;
+            List<String> failedWords = new ArrayList<>();
+            Set<String> addedKeys = new HashSet<>();
+
+            if (!pending.isEmpty()) {
+                Long groupId = body.get("groupId") == null ? null : ((Number) body.get("groupId")).longValue();
+                List<Long> groupIds = groupId == null ? null : Collections.singletonList(groupId);
+
+                List<AiWordDTO> parsed = aiParseService.parse(pending);
+
+                Map<String, AiWordDTO> byInput = new HashMap<>();
+                for (AiWordDTO d : parsed) {
+                    if (d.getInput() != null && !d.getInput().trim().isEmpty()) {
+                        byInput.putIfAbsent(d.getInput().trim().toLowerCase(Locale.ROOT), d);
+                    }
+                }
+
+                for (String w : pending) {
+                    AiWordDTO d = byInput.get(w.toLowerCase(Locale.ROOT));
+                    if (d == null) {
+                        failed++;
+                        failedWords.add(w);
+                        continue;
+                    }
+
+                    // 入库只用原型
+                    String lemma = (d.getLemma() == null || d.getLemma().trim().isEmpty())
+                            ? w : d.getLemma().trim();
+                    String lemmaKey = lemma.toLowerCase(Locale.ROOT);
+
+                    // 原型命中已有词，或本批次内前面已收录过同一个原型
+                    if (existing.contains(lemmaKey) || addedKeys.contains(lemmaKey)) {
+                        existingCount++;
+                        continue;
+                    }
+
+                    Word word = new Word();
+                    word.setWord(lemma);
+                    word.setPhonetic(d.getPhonetic());
+                    word.setMeaning(d.meaningText());
+                    word.setExampleSentence(d.getExample());
+                    word.setExampleMeaning(d.getExampleMeaning());
+                    word = wordRepository.save(word);
+
+                    wordGroupService.setWordGroups(word.getId(), groupIds);
+                    audioGenerationTaskService.triggerGeneration(lemma);
+
+                    addedKeys.add(lemmaKey);
+                    existing.add(lemmaKey);
+                    added++;
+                }
+            }
+
+            StringBuilder msg = new StringBuilder();
+            msg.append("本次添加了 ").append(added).append(" 个，词库已包含 ").append(existingCount).append(" 个");
+            if (duplicateCount > 0) {
+                msg.append("（输入已去重 ").append(duplicateCount).append(" 条）");
+            }
+            if (failed > 0) {
+                msg.append("，解析失败 ").append(failed).append(" 个");
+            }
+
+            result.put("success", true);
+            result.put("added", added);
+            result.put("existing", existingCount);
+            result.put("duplicated", duplicateCount);
+            result.put("failed", failed);
+            result.put("failedWords", failedWords);
+            result.put("message", msg.toString());
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "批量添加失败: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(result);
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.wordreview.entity;
 
 import lombok.Data;
+import org.hibernate.annotations.Formula;
 import javax.persistence.*;
 import java.time.LocalDateTime;
 
@@ -60,6 +61,15 @@ public class Word {
     // 仅认读标记
     @Column(nullable = false)
     private Boolean recogOnly = false;      // 是否仅认读（不参与默写）
+
+    /**
+     * 仅供排序使用：生词的小写形式，由数据库在查询时计算，不落库、不参与持久化。
+     * H2 默认 COLLATION=OFF，按 Java String.compareTo 排序区分大小写，
+     * 会把 Apple 排在 apple 前面；词表按字母序看这种结果像 bug，
+     * 所以「生词」列的排序走 LOWER(word)。
+     */
+    @Formula("LOWER(word)")
+    private String wordLower;
 
     /** 评分用临时字段，不持久化 */
     @Transient

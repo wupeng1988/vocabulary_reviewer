@@ -32,6 +32,9 @@
         <el-menu-item index="/stats">
           <span>📊 统计看板</span>
         </el-menu-item>
+        <el-menu-item index="/ai">
+          <span>🤖 AI 设置</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

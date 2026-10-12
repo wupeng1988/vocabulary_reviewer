@@ -5,6 +5,7 @@ import GroupManage from '../views/GroupManage.vue'
 import DataManage from '../views/DataManage.vue'
 import ReviewCenter from '../views/ReviewCenter.vue'
 import StatsDashboard from '../views/StatsDashboard.vue'
+import AiSettings from '../views/AiSettings.vue'
 
 const routes = [
   {
@@ -16,7 +17,8 @@ const routes = [
       { path: 'groups', name: 'Groups', component: GroupManage },
       { path: 'data', name: 'Data', component: DataManage },
       { path: 'review', name: 'Review', component: ReviewCenter },
-      { path: 'stats', name: 'Stats', component: StatsDashboard }
+      { path: 'stats', name: 'Stats', component: StatsDashboard },
+      { path: 'ai', name: 'AI', component: AiSettings }
     ]
   }
 ]

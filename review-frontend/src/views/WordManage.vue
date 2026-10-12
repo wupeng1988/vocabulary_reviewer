@@ -53,6 +53,7 @@
       <!-- 第二行：操作按钮组 -->
       <el-row :gutter="16" style="margin-top: 12px">
         <el-col :span="24">
+          <el-button size="small" type="primary" plain @click="openAiDialog">🤖 批量AI解析添加</el-button>
           <el-button size="small" type="success" @click="openAddDialog">➕ 新增</el-button>
           <el-button
             size="small"
@@ -91,12 +92,41 @@
       </el-row>
     </el-card>
 
+    <!-- 批量AI解析添加 -->
+    <el-dialog v-model="showAiDialog" title="批量AI解析添加" width="640px" :close-on-click-modal="false">
+      <div style="margin-bottom: 10px; font-size: 12px; color: #909399; line-height: 20px">
+        每行一个单词，可直接把词表粘进来。重复行会自动去重，词库里已有的单词会自动跳过；
+        AI 会把复数、过去式、-ing 等变形还原成<b>原形</b>后再入库。<br />
+        解析结果归入：<strong style="color: #409eff">{{ aiTargetGroupName }}</strong>
+      </div>
+      <el-input
+        v-model="aiInput"
+        type="textarea"
+        :rows="14"
+        placeholder="running&#10;studies&#10;children&#10;went"
+        style="font-size: 14px"
+      />
+      <div style="margin-top: 8px; font-size: 12px; color: #909399">
+        共 {{ aiLineCount }} 行，去重后 {{ aiUniqueCount }} 个单词{{ aiUniqueCount ? '，将逐批交给 AI 解析，词多时请耐心等待' : '' }}
+      </div>
+      <template #footer>
+        <el-button @click="showAiDialog = false">取消</el-button>
+        <el-button type="primary" :loading="aiSubmitting" :disabled="aiUniqueCount === 0" @click="submitAiWords">
+          添加
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 词库表格 -->
     <el-card>
       <el-table ref="wordTableRef" :data="words" stripe border style="width: 100%" @selection-change="handleSelectionChange" @sort-change="handleSortChange">
         <el-table-column type="selection" width="50" align="center" />
-        <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom" />
-        <el-table-column prop="word" label="生词" width="150">
+        <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom">
+          <template #default="{ row }">
+            <span class="id-link" @click="openViewDialog(row)">{{ row.id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="word" label="生词" width="150" sortable="custom">
           <template #default="{ row }">
             <span v-if="!hideWord">{{ row.word }}</span>
             <span v-else style="color: #c0c4cc">***</span>
@@ -214,6 +244,47 @@
       <template #footer>
         <el-button @click="showEditDialog = false">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 查看单词（只读，与编辑弹窗同布局） -->
+    <el-dialog v-model="showViewDialog" title="查看单词" width="580px" :close-on-click-modal="false">
+      <el-form :model="viewForm" label-width="90px">
+        <el-form-item label="ID">
+          <el-input :model-value="viewForm.id" disabled />
+        </el-form-item>
+        <el-form-item label="生词">
+          <el-input v-model="viewForm.word" disabled placeholder="英文单词" />
+        </el-form-item>
+        <el-form-item label="音标">
+          <el-input v-model="viewForm.phonetic" disabled placeholder="/ˈeksəmpəl/" />
+        </el-form-item>
+        <el-form-item label="含义">
+          <el-input v-model="viewForm.meaning" type="textarea" :rows="2" disabled placeholder="中文含义" />
+        </el-form-item>
+        <el-form-item label="例句">
+          <el-input v-model="viewForm.exampleSentence" type="textarea" :rows="2" disabled placeholder="英文例句" />
+        </el-form-item>
+        <el-form-item label="例句释义">
+          <el-input v-model="viewForm.exampleMeaning" type="textarea" :rows="2" disabled placeholder="例句的中文翻译" />
+        </el-form-item>
+        <el-form-item label="所属词组">
+          <el-tree-select
+            v-model="viewForm.groupIds"
+            :data="groupOptions"
+            multiple
+            show-checkbox
+            check-strictly
+            disabled
+            node-key="value"
+            :props="{ value: 'value', label: 'label', children: 'children' }"
+            placeholder="所属词组"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button type="primary" @click="showViewDialog = false">关闭</el-button>
       </template>
     </el-dialog>
 
@@ -368,7 +439,7 @@ import { Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import api from '../api'
-import { loadGroupTree, toTreeOptions } from '../utils/group'
+import { loadGroupTree, toTreeOptions, findNode } from '../utils/group'
 
 const router = useRouter()
 const words = ref([])
@@ -821,6 +892,32 @@ const saveEdit = async () => {
   editSaving.value = false
 }
 
+// ==================== 查看单词（只读） ====================
+const showViewDialog = ref(false)
+const viewForm = ref({
+  id: null,
+  word: '',
+  phonetic: '',
+  meaning: '',
+  exampleSentence: '',
+  exampleMeaning: '',
+  groupIds: []
+})
+
+/** 点表格 ID 列打开：字段与编辑弹窗一致，全部禁用不可改 */
+const openViewDialog = (row) => {
+  viewForm.value = {
+    id: row.id,
+    word: row.word,
+    phonetic: row.phonetic || '',
+    meaning: row.meaning || '',
+    exampleSentence: row.exampleSentence || '',
+    exampleMeaning: row.exampleMeaning || '',
+    groupIds: (row.groups || []).map(g => g.id)
+  }
+  showViewDialog.value = true
+}
+
 // ==================== 音频播放 ====================
 let currentAudio = null
 
@@ -858,6 +955,97 @@ const playWordAudio = async (word) => {
 }
 
 // ==================== 新增 ====================
+// ==================== 批量AI解析添加 ====================
+const showAiDialog = ref(false)
+const aiInput = ref('')
+const aiSubmitting = ref(false)
+
+/** 弹窗里非空行数 */
+const aiLineCount = computed(() =>
+  aiInput.value.split(/[\r\n]+/).map(v => v.trim()).filter(Boolean).length
+)
+
+/** 去重后的单词数（大小写不敏感，保留首次出现的原样） */
+const aiUniqueCount = computed(() => {
+  const seen = new Set()
+  for (const line of aiInput.value.split(/[\r\n]+/)) {
+    const w = line.trim()
+    if (w) seen.add(w.toLowerCase())
+  }
+  return seen.size
+})
+
+/** 解析结果归入的词组名：当前筛选词组，否则默认词组 */
+const aiTargetGroupName = computed(() => {
+  const id = filterGroupId.value || defaultGroupId.value
+  const node = id ? findNode(groupTree.value, id) : null
+  return node ? `${node.code} ${node.name}` : '默认词组'
+})
+
+/** 打开弹窗：先检查 AI 配置，未配置则提示并返回；每次打开都清空文本框 */
+const openAiDialog = async () => {
+  let cfg = null
+  try {
+    cfg = await api.get('/ai/config')
+  } catch (e) {
+    ElMessage.error('检查 AI 配置失败：' + (e.response?.data?.message || e.message))
+    return
+  }
+  if (!cfg || !cfg.configured) {
+    ElMessageBox.confirm(
+      '还没有配置 AI 服务商，批量解析前需要先填写服务商、API Key 和接口地址。',
+      '未配置 AI',
+      { confirmButtonText: '去配置', cancelButtonText: '取消', type: 'warning' }
+    ).then(() => router.push('/ai')).catch(() => {})
+    return
+  }
+
+  aiInput.value = ''
+  showAiDialog.value = true
+}
+
+/** 提交：前端先去重，后端会再排重、排除词库已有词并调用 AI */
+const submitAiWords = async () => {
+  const seen = new Set()
+  const words = []
+  for (const line of aiInput.value.split(/[\r\n]+/)) {
+    const w = line.trim()
+    if (!w) continue
+    const key = w.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    words.push(w)
+  }
+  if (words.length === 0) {
+    ElMessage.warning('请至少输入一个单词')
+    return
+  }
+
+  aiSubmitting.value = true
+  try {
+    const res = await api.post(
+      '/words/batch-ai',
+      { words, groupId: filterGroupId.value || null },
+      { timeout: 300000 }
+    )
+    showAiDialog.value = false
+    ElMessage({ type: 'success', message: res.message, duration: 6000, showClose: true })
+    if (res.failed > 0 && Array.isArray(res.failedWords) && res.failedWords.length) {
+      ElMessage({
+        type: 'warning',
+        message: '解析失败：' + res.failedWords.join('、'),
+        duration: 8000,
+        showClose: true
+      })
+    }
+    loadWords()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '批量添加失败')
+  } finally {
+    aiSubmitting.value = false
+  }
+}
+
 const showAddDialog = ref(false)
 const addSaving = ref(false)
 const addForm = ref({
@@ -966,5 +1154,16 @@ onUnmounted(() => {
   top: 0;
   z-index: 10;
   margin-bottom: 20px;
+}
+
+/* ID 列：可点击打开查看弹窗，带下划线提示可点 */
+.id-link {
+  color: #409eff;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.id-link:hover {
+  color: #66b1ff;
 }
 </style>

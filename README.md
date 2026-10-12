@@ -7,6 +7,7 @@
 ## ✨ 功能特性
 
 - 📥 **Excel 导入 / 导出** — 支持 `.xls` / `.xlsx`，Upsert 去重更新并保留复习统计；导出按词组分 Sheet
+- 🤖 **AI 批量导入** — 粘贴一列单词，DeepSeek / 通义千问自动还原原型并补齐音标、全部释义、雅思例句
 - 🧠 **智能调度算法** — 三级筛选（强制召回 → 综合评分 → 随机抽样），兼顾紧急度与饥饿度
 - 📖 **四阶段复习** — 认读 → 拼写练习 → 默写 → 听音默写，"认识"不等于"会写"
 - 🎯 **五种复习模式** — 完整复习 / 仅认读 / 仅拼写练习 / 仅默写 / 仅听音默写，词库页还可勾选单词自定义阶段组合
@@ -94,9 +95,10 @@ vocabulary-review/
 │           ├── WordReviewApplication.java     # 启动类
 │           ├── entity/                        # Word / ReviewConfig / WordGroup / WordGroupMember
 │           ├── repository/                    # 对应四个 Repository
-│           ├── service/                       # 调度、Excel 导入导出、JSON 备份、词组、Edge TTS、统计
+│           ├── service/                       # 调度、Excel 导入导出、JSON 备份、词组、Edge TTS、统计、AI 配置与解析
 │           ├── controller/                    # /api/words /review /stats /audio /groups
 │           ├── config/SpaFallbackConfig.java  # 发布包 SPA 路由回退（dev 环境自动跳过）
+│           ├── entity/AiConfig.java           # AI 配置单例行（独立于词库，不进备份）
 │           └── dto/                           # 请求 / 响应 DTO
 │
 ├── review-frontend/                       # Vue 3 前端
@@ -104,8 +106,9 @@ vocabulary-review/
 │   └── src/
 │       ├── main.js / App.vue / style.css
 │       ├── api/index.js                   # Axios 封装
-│       ├── router/index.js                # 路由: /words /groups /data /review /stats
+│       ├── router/index.js                # 路由: /words /groups /data /review /stats /ai
 │       ├── utils/group.js                 # 词组树加载 / 树选项转换 / 默认词组查找
+│       ├── views/AiSettings.vue            # AI 设置页（/ai）
 │       ├── components/Layout.vue          # 左菜单 + 右内容
 │       └── views/                         # 词库 / 词组 / 数据 / 复习 / 统计 五个页面
 │
@@ -273,6 +276,7 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | PUT | `/api/words/{id}/recog-only` | 更新「仅认读」标记 |
 | PUT | `/api/words/{id}/groups` | 覆盖式设置所属词组 `{groupIds:[...]}`（传空回落默认词组） |
 | POST | `/api/words/batch-groups` | 批量调组 `{wordIds, groupIds, mode: replace/add/remove}` |
+| POST | `/api/words/batch-ai` | **批量AI解析添加** `{words:[...], groupId?}`，返回 added / existing / duplicated / failed |
 | GET | `/api/words/export` | 导出 JSON 备份 version 2（含词组树 + 单词词组关系） |
 | GET | `/api/words/export-excel` | 按词组分 Sheet 导出 Excel（含「未分组」Sheet） |
 
@@ -305,6 +309,15 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | POST | `/api/groups` | 新增词组 `{code?, name, parentId?, sortOrder?}`（code 留空自动生成 Gxxx） |
 | PUT | `/api/groups/{id}` | 更新词组 `{code, name, parentId, sortOrder}`（防成环校验） |
 | DELETE | `/api/groups/{id}` | 删除词组（默认词组 / 有子词组不可删） |
+
+### AI 配置
+
+| 方法 | 路径 | 功能 |
+|:---|:---|:---|
+| GET | `/api/ai/config` | 读取 AI 配置（`provider` / `apiKey` / `baseUrl` / `model` / `configured`） |
+| PUT | `/api/ai/config` | 保存 AI 配置 |
+
+> AI 配置存在独立的 `ai_config` 表：**JSON 备份导出不含它**（避免泄漏 API Key），**导入也不覆盖它**。
 
 ---
 
@@ -356,7 +369,10 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | **拼写校验** | 忽略大小写与首尾空格，Unicode 连字符归一化为 U+002D |
 | **默写正确率** | 仅统计第一轮默写首次尝试结果，重复尝试不覆盖 |
 | **防重入** | 正确后等待自动跳转期间忽略后续回车 |
+| **批量AI解析添加** | 输入内部去重 → 排除词库已有词 → AI 还原原型 → **只用原型 lemma 入库**；原型已存在（含本批次重复）计入「词库已包含」；AI 全部解析完才入库，中途失败不留半截数据 |
+| **AI 配置独立** | `ai_config` 表单独存放，不进 JSON 备份；走 OpenAI 兼容 `/chat/completions`，支持 DeepSeek 与通义千问，每批 10 词、超时 90s |
 | **键盘快捷键** | 拼写练习 / 默写输入框：Enter 提交，**Shift+Enter 重听发音**（不提交）；认读阶段 ← → 切词、Enter = 认识 / 下一个 |
+| **列表排序** | 词库管理的 ID / 生词 / 复习次数 走服务端排序；`sortField` 只接受白名单字段，非法值 400。生词按 `LOWER(word)` 排序，**不区分大小写**（否则 H2 会把 `Apple` 排在 `apple` 前） |
 | **数据持久化** | H2 文件模式 `~/worddb.mv.db`，重启不丢数据 |
 
 ---

@@ -17,10 +17,12 @@ vocabulary-review/
 │   └── src/main/java/com/wordreview/
 │       ├── WordReviewApplication.java    # 启动类
 │       ├── entity/Word.java              # 单词实体（含 recogOnly 仅认读标记）
+│       ├── entity/AiConfig.java          # AI 配置单例行（provider/apiKey/baseUrl/model，独立于词库数据）
 │       ├── entity/ReviewConfig.java      # 复习配置实体
 │       ├── entity/WordGroup.java         # 词组实体（编号/名称/parentId/sortOrder/isDefault，树形）
 │       ├── entity/WordGroupMember.java   # 单词-词组多对多关联
 │       ├── repository/WordRepository.java
+│       ├── repository/AiConfigRepository.java
 │       ├── repository/ReviewConfigRepository.java
 │       ├── repository/WordGroupRepository.java
 │       ├── repository/WordGroupMemberRepository.java
@@ -32,19 +34,22 @@ vocabulary-review/
 │       ├── service/AudioGenerationTaskService.java # 音频批量生成任务管理
 │       ├── service/DataExportImportService.java   # JSON 数据导入导出（含词组关系）
 │       ├── service/WordGroupService.java         # 词组树管理 + 单词-词组关联
+│       ├── service/AiConfigService.java          # AI 配置单例读写
+│       ├── service/AiParseService.java           # 调大模型批量解析（OpenAI 兼容 /chat/completions）
 │       ├── controller/WordController.java        # /api/words/*（含 Excel 导出、词组筛选、批量调组）
 │       ├── controller/ReviewController.java      # /api/review/*（含指定ID复习）
 │       ├── controller/StatsController.java       # /api/stats/*
 │       ├── controller/AudioController.java       # /api/audio/*
 │       ├── controller/WordGroupController.java   # /api/groups/*
+│       ├── controller/AiController.java          # /api/ai/config
 │       ├── config/SpaFallbackConfig.java          # 发布包 SPA 路由回退过滤器（dev 环境自动跳过）
-│       └── dto/                                  # 请求/响应 DTO
+│       └── dto/                                  # 请求/响应 DTO（含 AiWordDTO：AI 解析单词条）
 ├── review-frontend/                   # Vue 3 前端
 │   ├── vite.config.js                 # 含 /api、/audio 代理到 localhost:8080
 │   └── src/
 │       ├── main.js                    # 注册 ElementPlus + Router
 │       ├── api/index.js               # Axios 封装（含 exportData、exportExcel）
-│       ├── router/index.js            # 路由: /words, /groups, /review, /stats, /data
+│       ├── router/index.js            # 路由: /words, /groups, /review, /stats, /data, /ai
 │       ├── components/Layout.vue      # 左菜单+右内容布局
 │       ├── utils/group.js             # 词组树加载/树选项转换/默认词组查找
 │       └── views/
@@ -52,6 +57,7 @@ vocabulary-review/
 │           ├── GroupManage.vue        # 词组管理（树形表格，增删改查，子词组）
 │           ├── ReviewCenter.vue       # 复习中心（认读+拼写练习+默写+听音默写四阶段）
 │           ├── DataManage.vue         # 数据管理（JSON导入导出+Excel导入需选词组+按Sheet导出）
+│           ├── AiSettings.vue         # AI 设置（服务商/API Key/接口地址/模型，支持 DeepSeek 与通义千问）
 │           └── StatsDashboard.vue    # 统计看板（卡片+ECharts图表）
 ├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
 ├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip)，产物在 release/
@@ -105,6 +111,7 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | PUT | `/api/words/{id}/recog-only` | 更新仅认读标记 |
 | PUT | `/api/words/{id}/groups` | 覆盖式设置单词所属词组 {groupIds:[...]}（传空回落到默认词组） |
 | POST | `/api/words/batch-groups` | 批量调整选中单词的词组 {wordIds, groupIds, mode: replace/add/remove} |
+| POST | `/api/words/batch-ai` | 批量AI解析添加 {words:[...], groupId?}，返回 added/existing/duplicated/failed/failedWords/message |
 | GET | `/api/words/export` | 导出全部数据为 JSON version 2（含词组树和单词词组关系） |
 | GET | `/api/words/export-excel` | 按词组导出 Excel，每个词组一个 Sheet（含「未分组」Sheet）|
 | GET | `/api/review/config` | 获取复习配置 |
@@ -122,6 +129,8 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | POST | `/api/groups` | 新增词组 {code?, name, parentId?, sortOrder?}（code 留空自动生成 Gxxx） |
 | PUT | `/api/groups/{id}` | 更新词组 {code, name, parentId, sortOrder}（防成环校验） |
 | DELETE | `/api/groups/{id}` | 删除词组（默认词组/有子词组不可删） |
+| GET | `/api/ai/config` | 读取 AI 配置（provider/apiKey/baseUrl/model/configured） |
+| PUT | `/api/ai/config` | 保存 AI 配置 |
 
 ## 核心算法：复习调度（ReviewService.generateReviewList）
 1. **强制召回**: last_review_date IS NULL 或距今 > maxDormantDays 天 → 直接入围
@@ -150,9 +159,19 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **拼写校验**: 忽略大小写与首尾空格，Unicode 连字符统一归一化为普通连字符 (U+002D)
 - **默写正确率统计**: 仅统计第一轮默写首次尝试结果，重复尝试不覆盖
 - **防重入**: 拼写练习、默写和听音默写阶段，正确后等待自动跳转期间忽略后续回车
-- **键盘快捷键**: 拼写练习/默写输入框 Enter 提交，**Shift+Enter 播放当前单词发音且不提交**
+- **键盘快捷键**: 拼写练习/默写/听音默写 输入框 Enter 提交，**Shift+Enter 播放当前单词发音且不提交**
   （Vue 的 `@keyup.enter` 只看按键不看修饰键，Shift+Enter 也会命中，必须在处理器里用 `e.shiftKey` 分流，
-  见 `onPracticeEnter` / `onSpellEnter`）；认读阶段 ← 上一个、→ 下一个（已作答后生效）、Enter = 认识 / 下一个
+  见 `onPracticeEnter` / `onSpellEnter` / `onDictationEnter`）；认读阶段 ← 上一个、→ 下一个（已作答后生效）、
+  Enter = 认识 / 下一个。三个阶段的输入框正下方都用 `.shortcut-hint` 常驻一行小字提示（kbd 键帽样式）
+- **批量AI解析添加**: 词库管理页「批量AI解析添加」按钮（在「➕ 新增」左侧）。流程为
+  **输入内部去重（大小写不敏感，保留首次原样）→ 排除词库已有词 → 交给 AI → 只用返回的原型 lemma 入库**；
+  原型若已存在（含本批次内重复）计入「词库已包含」。AI 全部解析成功后才开始入库，中途失败不留半截数据。
+  返回 message 形如「本次添加了 N 个，词库已包含 M 个（输入已去重 K 条）」
+- **AI 配置独立于词库数据**: 存在单独的 `ai_config` 表，**JSON 备份导出不含它**（避免泄漏 API Key），
+  **导入也不覆盖它**；未配置时点按钮直接提示并引导跳转「AI 设置」
+- **AI 接入协议**: OpenAI 兼容 `/chat/completions`，因此 DeepSeek（`https://api.deepseek.com` + `deepseek-chat`）
+  和通义千问（`https://dashscope.aliyuncs.com/compatible-mode/v1` + `qwen-plus`）都能用，也支持自定义网关；
+  每批 10 个词、超时 90s，返回内容要宽容解析（去代码块围栏、按 input 对齐），信息全空的条目判为解析失败不入库
 - **H2 Console**: http://localhost:8080/h2-console (JDBC URL: jdbc:h2:~/worddb, user: sa, password: 空)
 
 ## 音频发音系统
@@ -174,7 +193,16 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - CORS 已全局开放，Vite 通过 proxy 转发 /api 和 /audio 请求
 - 音频目录 `review-backend/audio/` **已入版本库**（4187 个 mp3 / 49MB，无 ignore 规则）；发布包不内置 audio，用户首次运行按需联网生成
 - 词库管理页面支持编辑单词（生词、音标、含义、例句、例句释义、所属词组），修改生词时后端检测重名冲突
-- 词库管理表格支持 ID 列服务端排序（sortable="custom"，sortField/sortOrder 参数传后端）
+- 词库管理表格支持服务端排序（`sortable="custom"`，`sortField`/`sortOrder` 参数传后端），
+  当前可排序列：**ID / 生词 / 复习次数**
+- **排序字段走白名单**：`WordController.SORT_FIELD_WHITELIST` 把 UI 字段名映射到实体属性，
+  非法值返回 400（由 `@ExceptionHandler(IllegalArgumentException)` 统一兜底，避免变成 500）；
+  新增可排序列必须同步补白名单
+- **生词排序不区分大小写**：H2 默认 `COLLATION=OFF`，按 `String.compareTo` 会把 `Apple` 排在 `apple` 前面。
+  Word 实体上加了 `@Formula("LOWER(word)") wordLower`（只读、不落库），`sortField=word` 映射到它，
+  因此任何查询变体（含词组筛选、关键词搜索）都能直接用 `Sort.by` 排序，无需为每种组合再写 JPQL
 - 词库管理表格左侧有复选框，选中后可「调整词组」或点击复习按钮自定义阶段复习
+- 词库管理表格 **ID 列可点击**（`.id-link` 加下划线+主色提示），点开只读的「查看单词」弹窗：
+  字段与布局跟编辑弹窗一致，所有输入框 `disabled`，底部只有「关闭」
 - 词组树状下拉使用 el-tree-select（check-strictly 独立勾选，含子词组），词组选项用 `utils/group.js` 的 toTreeOptions 转换
 - 分页查询接口支持 sortField（默认 id）和 sortOrder（默认 asc）参数

@@ -289,9 +289,12 @@
                 size="large"
                 placeholder="请根据发音输入单词..."
                 style="font-size: 20px; max-width: 400px"
-                @keyup.enter="checkDictation"
+                @keyup.enter="onDictationEnter"
                 @keydown.delete="onDictationDelete"
               />
+              <div class="shortcut-hint">
+                <kbd>Enter</kbd> 提交答案<span class="sep">·</span><kbd>Shift + Enter</kbd> 再听一遍发音
+              </div>
             </div>
 
             <!-- 拼写结果反馈 -->
@@ -1228,6 +1231,22 @@ const onDictationDelete = (e) => {
     dictationFeedback.value = ''
     dictationShowWrong.value = false
   }
+}
+
+/**
+ * 听音默写输入框回车处理：
+ * - Enter：提交校验
+ * - Shift + Enter：再听一遍当前单词发音，不提交
+ *
+ * 同 onSpellEnter：@keyup.enter 不区分修饰键，需在此分流。
+ * 听音默写切词时会自动播一次，Shift+Enter 用来重听。
+ */
+const onDictationEnter = (e) => {
+  if (e.shiftKey) {
+    playWordAudio(currentWord.value?.word)
+    return
+  }
+  checkDictation()
 }
 
 const checkDictation = async () => {
