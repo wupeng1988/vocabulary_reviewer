@@ -71,6 +71,7 @@
 
         <el-form-item>
           <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+          <el-button :loading="saving" @click="clear">清空配置</el-button>
           <el-button @click="load">重新加载</el-button>
           <span style="margin-left: 12px; font-size: 12px; color: #909399">
             保存后即可去「词库管理」使用「批量AI解析添加」
@@ -83,7 +84,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 
 /** 各服务商的默认接口地址与模型，切换时自动填充 */
@@ -151,33 +152,61 @@ const load = async () => {
 }
 
 const save = async () => {
-  if (!form.value.apiKey.trim()) {
-    ElMessage.warning('请填写 API Key')
-    return
+  const apiKey = form.value.apiKey.trim()
+  const baseUrl = form.value.baseUrl.trim()
+  const model = form.value.model.trim()
+  const allEmpty = !apiKey && !baseUrl && !model
+
+  // 全空 = 清空配置（需确认）；只要填了任意一项，就必须三项齐全
+  if (allEmpty) {
+    try {
+      await ElMessageBox.confirm(
+        '清空后「批量AI解析添加」将不可用，直到重新填写。确定清空吗？',
+        '清空 AI 配置',
+        { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' }
+      )
+    } catch {
+      return
+    }
+  } else {
+    if (!apiKey) {
+      ElMessage.warning('请填写 API Key（若想清空请点「清空配置」）')
+      return
+    }
+    if (!baseUrl) {
+      ElMessage.warning('请填写接口地址')
+      return
+    }
+    if (!model) {
+      ElMessage.warning('请填写模型名称')
+      return
+    }
   }
-  if (!form.value.baseUrl.trim()) {
-    ElMessage.warning('请填写接口地址')
-    return
-  }
-  if (!form.value.model.trim()) {
-    ElMessage.warning('请填写模型名称')
-    return
-  }
+
   saving.value = true
   try {
     const res = await api.put('/ai/config', {
       provider: form.value.provider,
-      apiKey: form.value.apiKey.trim(),
-      baseUrl: form.value.baseUrl.trim(),
-      model: form.value.model.trim()
+      apiKey,
+      baseUrl,
+      model
     })
     configured.value = !!res.configured
-    ElMessage.success('保存成功，可以去词库管理批量解析了')
+    ElMessage.success(res.message || '保存成功')
+    if (!configured.value) load()
   } catch (e) {
     ElMessage.error(e.response?.data?.message || '保存失败')
   } finally {
     saving.value = false
   }
+}
+
+/** 一键清空：把三项置空后走正常保存流程（会弹确认） */
+const clear = () => {
+  form.value.apiKey = ''
+  form.value.baseUrl = ''
+  form.value.model = ''
+  save()
 }
 
 onMounted(load)

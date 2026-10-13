@@ -1,19 +1,23 @@
 package com.wordreview.service;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +39,7 @@ import java.util.concurrent.TimeoutException;
  */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class EdgeTtsService {
 
     // ===== 协议常量（来自 constants.py） =====
@@ -43,48 +48,87 @@ public class EdgeTtsService {
     private static final String WSS_URL = "wss://" + BASE_URL + "/edge/v1?TrustedClientToken=" + TRUSTED_CLIENT_TOKEN;
     private static final String CHROMIUM_FULL_VERSION = "143.0.3650.75";
     private static final String CHROMIUM_MAJOR_VERSION = CHROMIUM_FULL_VERSION.split("\\.")[0];
-    private static final String SEC_MS_GEC_VERSION = "1-" + CHROMIUM_FULL_VERSION;
+    /** 微软 2026-10 起只认 v2 token，版本前缀也从 1- 换成了 2-，两者必须配套 */
+    private static final String SEC_MS_GEC_VERSION = "2-" + CHROMIUM_FULL_VERSION;
     private static final String DEFAULT_VOICE = "en-US-JennyNeural";
 
     private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             + " (KHTML, like Gecko) Chrome/" + CHROMIUM_MAJOR_VERSION + ".0.0.0 Safari/537.36"
             + " Edg/" + CHROMIUM_MAJOR_VERSION + ".0.0.0";
 
-    // Windows 文件时间常量（来自 drm.py）
-    private static final long WIN_EPOCH = 11644473600L;
-    private static final double S_TO_NS = 1e9;
+    /** 与微软服务器的时钟偏差（毫秒）；握手 403 时用服务器 Date 头校准 */
+    private volatile long clockSkewMillis = 0;
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    /** 每个进程最多校时一次：校过还不行就说明不是时钟问题，别再白跑一趟 */
+    private volatile boolean clockSynced = false;
+
+    /** 网络代理配置：进程内共用一个 HttpClient，配置改了下次请求就走新通道，无需重启 */
+    private final ProxyConfigService proxyConfigService;
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     /**
-     * 生成 Sec-MS-GEC DRM token（来自 drm.py generate_sec_ms_gec）
+     * 生成 Sec-MS-GEC v2 DRM token（算法在 {@link EdgeTtsDrm}）。
+     * 微软 2026-10 起只认 v2，格式为 &lt;CS64&gt;-&lt;SHA256&gt;，版本前缀也要用 2-。
      */
     private String generateSecMsGec() {
+        return EdgeTtsDrm.generateSecMsGec(serverNowMillis() / 1000.0);
+    }
+
+    /** 校准过时钟偏差后的时间：Sec-MS-GEC 是时间令牌，本机时钟偏一点就会 403 */
+    private long serverNowMillis() {
+        return System.currentTimeMillis() + clockSkewMillis;
+    }
+
+    /**
+     * 用微软返回的 Date 头校准本机时钟偏差（对应 drm.py handle_client_response_error）。
+     * 只在握手 403 时才会调用，成功后同一个进程内一直复用。
+     */
+    private void calibrateClockSkew() {
         try {
-            double ticks = Instant.now().getEpochSecond();
-            // 切换到 Windows 文件时间纪元
-            ticks += WIN_EPOCH;
-            // 向下取整到最近的 5 分钟 (300 秒)
-            ticks -= ticks % 300;
-            // 转换为 100 纳秒间隔 (Windows 文件时间格式)
-            ticks *= S_TO_NS / 100;
-            // 拼接 trusted client token 后 SHA256
-            String strToHash = String.format("%.0f%s", ticks, TRUSTED_CLIENT_TOKEN);
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(strToHash.getBytes(StandardCharsets.US_ASCII));
-            return bytesToHex(hash).toUpperCase();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://" + BASE_URL + "/"))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("User-Agent", USER_AGENT)
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = proxyConfigService.getHttpClient()
+                    .send(request, HttpResponse.BodyHandlers.discarding());
+            String date = response.headers().firstValue("Date").orElse(null);
+            if (date == null) {
+                log.warn("Edge TTS 校时失败：响应里没有 Date 头");
+                return;
+            }
+            Instant serverTime = DateTimeFormatter.RFC_1123_DATE_TIME
+                    .withLocale(Locale.US)
+                    .parse(date.trim(), Instant::from);
+            long skew = serverTime.toEpochMilli() - System.currentTimeMillis();
+            clockSkewMillis = skew;
+            log.warn("Edge TTS 服务器与本机时钟相差 {} ms，已校准（服务器时间: {}）", skew, date.trim());
         } catch (Exception e) {
-            throw new RuntimeException("生成 DRM token 失败", e);
+            log.warn("Edge TTS 校时失败: {}", e.toString());
         }
     }
 
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
+    /** 异常链里找 403：握手被拒时 JDK 抛 WebSocketHandshakeException，状态码在更深层的 cause 里 */
+    private static boolean looksLikeForbidden(Throwable e) {
+        Throwable t = e;
+        for (int i = 0; i < 10 && t != null; i++) {
+            String msg = t.getMessage();
+            if (msg != null && msg.contains("403")) {
+                return true;
+            }
+            t = t.getCause() == t ? null : t.getCause();
         }
-        return sb.toString();
+        return false;
+    }
+
+    /** 取异常链最深处的 message，日志里更有诊断价值 */
+    private static String rootCauseMessage(Throwable e) {
+        Throwable t = e;
+        for (int i = 0; i < 10 && t.getCause() != null && t.getCause() != t; i++) {
+            t = t.getCause();
+        }
+        return t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
     }
 
     /**
@@ -170,8 +214,25 @@ public class EdgeTtsService {
 
     /**
      * 核心合成方法：建立 WebSocket 连接，发送请求，收集音频数据。
+     *
+     * 握手被 403 拒绝时，多半是本机时钟和微软服务器对不齐（Sec-MS-GEC 是 5 分钟粒度的时间令牌），
+     * 此时用服务器的 Date 头校准偏差后重试一次，对应 edge-tts 里 on 403 → handle_client_response_error 的逻辑。
      */
     private byte[] synthesize(String text, String voice) throws Exception {
+        try {
+            return doSynthesize(text, voice);
+        } catch (Exception e) {
+            if (!looksLikeForbidden(e) || clockSynced) {
+                throw e;
+            }
+            clockSynced = true;
+            log.warn("Edge TTS 握手被拒(403)，尝试校准服务器时钟后重试一次: {}", rootCauseMessage(e));
+            calibrateClockSkew();
+            return doSynthesize(text, voice);
+        }
+    }
+
+    private byte[] doSynthesize(String text, String voice) throws Exception {
         String secMsGec = generateSecMsGec();
         String connectionId = UUID.randomUUID().toString().replace("-", "");
         String fullUrl = WSS_URL + "&ConnectionId=" + connectionId
@@ -199,8 +260,10 @@ public class EdgeTtsService {
 
         // WebSocket 监听器：收集音频数据，turn.end 时释放 latch
         SynthesisListener listener = new SynthesisListener();
-        WebSocket ws = httpClient.newWebSocketBuilder()
+        WebSocket ws = proxyConfigService.getHttpClient().newWebSocketBuilder()
                 .header("User-Agent", USER_AGENT)
+                .header("Pragma", "no-cache")
+                .header("Cache-Control", "no-cache")
                 .header("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold")
                 .header("Cookie", "muid=" + generateMuid() + ";")
                 .buildAsync(URI.create(fullUrl), listener)

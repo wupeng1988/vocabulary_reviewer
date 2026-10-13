@@ -38,15 +38,34 @@ public class AiController {
     public ResponseEntity<Map<String, Object>> saveConfig(@RequestBody AiConfig config) {
         Map<String, Object> result = new HashMap<>();
         try {
-            if (config == null || config.getProvider() == null || config.getProvider().trim().isEmpty()) {
+            if (config == null) {
                 result.put("success", false);
-                result.put("message", "请选择 AI 服务商");
+                result.put("message", "请求内容为空");
                 return ResponseEntity.badRequest().body(result);
             }
+            // 服务商留空时保持默认值，保证清空后前端下拉框仍有选项
+            config.setProvider(notBlank(config.getProvider()) ? config.getProvider().trim() : "deepseek");
+
+            // 三项要么都填、要么都清空：混着填一律拦下，避免存出半套配置
+            boolean hasApiKey = notBlank(config.getApiKey());
+            boolean hasBaseUrl = notBlank(config.getBaseUrl());
+            boolean hasModel = notBlank(config.getModel());
+            if (hasApiKey != hasBaseUrl || hasBaseUrl != hasModel) {
+                result.put("success", false);
+                result.put("message", "API Key、接口地址、模型三项要么都填，要么都清空");
+                return ResponseEntity.badRequest().body(result);
+            }
+            if (!hasApiKey) {
+                config.setApiKey(null);
+                config.setBaseUrl(null);
+                config.setModel(null);
+            }
+
             AiConfig saved = aiConfigService.save(config);
+            boolean configured = aiConfigService.isConfigured();
             result.put("success", true);
-            result.put("message", "保存成功");
-            result.put("configured", aiConfigService.isConfigured());
+            result.put("message", configured ? "保存成功" : "AI 配置已清空，「批量AI解析添加」将不可用，重新填写即可恢复");
+            result.put("configured", configured);
             result.put("provider", saved.getProvider());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
@@ -54,5 +73,9 @@ public class AiController {
             result.put("message", "保存失败: " + e.getMessage());
             return ResponseEntity.internalServerError().body(result);
         }
+    }
+
+    private static boolean notBlank(String s) {
+        return s != null && !s.trim().isEmpty();
     }
 }

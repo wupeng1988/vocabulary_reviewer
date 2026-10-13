@@ -96,9 +96,22 @@
     <el-dialog v-model="showAiDialog" title="批量AI解析添加" width="640px" :close-on-click-modal="false">
       <div style="margin-bottom: 10px; font-size: 12px; color: #909399; line-height: 20px">
         每行一个单词，可直接把词表粘进来。重复行会自动去重，词库里已有的单词会自动跳过；
-        AI 会把复数、过去式、-ing 等变形还原成<b>原形</b>后再入库。<br />
-        解析结果归入：<strong style="color: #409eff">{{ aiTargetGroupName }}</strong>
+        AI 会把复数、过去式、-ing 等变形还原成<b>原形</b>后再入库。
       </div>
+      <el-form label-width="80px" style="margin-bottom: 4px">
+        <el-form-item label="所属词组">
+          <el-tree-select
+            v-model="aiGroupId"
+            :data="groupOptions"
+            check-strictly
+            default-expand-all
+            node-key="value"
+            :props="{ value: 'value', label: 'label', children: 'children' }"
+            placeholder="选择目标词组"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
       <el-input
         v-model="aiInput"
         type="textarea"
@@ -439,7 +452,7 @@ import { Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import api from '../api'
-import { loadGroupTree, toTreeOptions, findNode } from '../utils/group'
+import { loadGroupTree, toTreeOptions } from '../utils/group'
 
 const router = useRouter()
 const words = ref([])
@@ -958,6 +971,8 @@ const playWordAudio = async (word) => {
 // ==================== 批量AI解析添加 ====================
 const showAiDialog = ref(false)
 const aiInput = ref('')
+/** 解析结果要归入的词组（单选），打开弹窗时按当前筛选词组 / 默认词组初始化 */
+const aiGroupId = ref(null)
 const aiSubmitting = ref(false)
 
 /** 弹窗里非空行数 */
@@ -973,13 +988,6 @@ const aiUniqueCount = computed(() => {
     if (w) seen.add(w.toLowerCase())
   }
   return seen.size
-})
-
-/** 解析结果归入的词组名：当前筛选词组，否则默认词组 */
-const aiTargetGroupName = computed(() => {
-  const id = filterGroupId.value || defaultGroupId.value
-  const node = id ? findNode(groupTree.value, id) : null
-  return node ? `${node.code} ${node.name}` : '默认词组'
 })
 
 /** 打开弹窗：先检查 AI 配置，未配置则提示并返回；每次打开都清空文本框 */
@@ -1001,6 +1009,8 @@ const openAiDialog = async () => {
   }
 
   aiInput.value = ''
+  // 默认带上当前筛选的词组，没筛选就落默认词组
+  aiGroupId.value = filterGroupId.value || defaultGroupId.value
   showAiDialog.value = true
 }
 
@@ -1025,7 +1035,7 @@ const submitAiWords = async () => {
   try {
     const res = await api.post(
       '/words/batch-ai',
-      { words, groupId: filterGroupId.value || null },
+      { words, groupId: aiGroupId.value || defaultGroupId.value || null },
       { timeout: 300000 }
     )
     showAiDialog.value = false

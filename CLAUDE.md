@@ -18,11 +18,13 @@ vocabulary-review/
 │       ├── WordReviewApplication.java    # 启动类
 │       ├── entity/Word.java              # 单词实体（含 recogOnly 仅认读标记）
 │       ├── entity/AiConfig.java          # AI 配置单例行（provider/apiKey/baseUrl/model，独立于词库数据）
+│       ├── entity/ProxyConfig.java       # 网络代理配置单例行（enabled/host/port，独立于词库数据）
 │       ├── entity/ReviewConfig.java      # 复习配置实体
 │       ├── entity/WordGroup.java         # 词组实体（编号/名称/parentId/sortOrder/isDefault，树形）
 │       ├── entity/WordGroupMember.java   # 单词-词组多对多关联
 │       ├── repository/WordRepository.java
 │       ├── repository/AiConfigRepository.java
+│       ├── repository/ProxyConfigRepository.java
 │       ├── repository/ReviewConfigRepository.java
 │       ├── repository/WordGroupRepository.java
 │       ├── repository/WordGroupMemberRepository.java
@@ -31,10 +33,12 @@ vocabulary-review/
 │       ├── service/ReviewService.java            # 核心调度算法 + 记录结果 + 指定ID复习
 │       ├── service/StatsService.java             # 统计看板
 │       ├── service/EdgeTtsService.java           # Edge TTS Java 原生实现（WebSocket 协议）
+│       ├── service/EdgeTtsDrm.java               # Sec-MS-GEC v2 token（魔改 SHA-256 + CS64，逐行移植上游 drm.py）
 │       ├── service/AudioGenerationTaskService.java # 音频批量生成任务管理
 │       ├── service/DataExportImportService.java   # JSON 数据导入导出（含词组关系）
 │       ├── service/WordGroupService.java         # 词组树管理 + 单词-词组关联
 │       ├── service/AiConfigService.java          # AI 配置单例读写
+│       ├── service/ProxyConfigService.java       # 代理配置单例读写 + 按配置构造 HttpClient（按签名缓存）
 │       ├── service/AiParseService.java           # 调大模型批量解析（OpenAI 兼容 /chat/completions）
 │       ├── controller/WordController.java        # /api/words/*（含 Excel 导出、词组筛选、批量调组）
 │       ├── controller/ReviewController.java      # /api/review/*（含指定ID复习）
@@ -42,6 +46,7 @@ vocabulary-review/
 │       ├── controller/AudioController.java       # /api/audio/*
 │       ├── controller/WordGroupController.java   # /api/groups/*
 │       ├── controller/AiController.java          # /api/ai/config
+│       ├── controller/ProxyController.java       # /api/proxy/*（配置读写 + 代理/直连连通性测试）
 │       ├── config/SpaFallbackConfig.java          # 发布包 SPA 路由回退过滤器（dev 环境自动跳过）
 │       └── dto/                                  # 请求/响应 DTO（含 AiWordDTO：AI 解析单词条）
 ├── review-frontend/                   # Vue 3 前端
@@ -49,7 +54,7 @@ vocabulary-review/
 │   └── src/
 │       ├── main.js                    # 注册 ElementPlus + Router
 │       ├── api/index.js               # Axios 封装（含 exportData、exportExcel）
-│       ├── router/index.js            # 路由: /words, /groups, /review, /stats, /data, /ai
+│       ├── router/index.js            # 路由: /words, /groups, /review, /stats, /data, /ai, /proxy
 │       ├── components/Layout.vue      # 左菜单+右内容布局
 │       ├── utils/group.js             # 词组树加载/树选项转换/默认词组查找
 │       └── views/
@@ -58,6 +63,7 @@ vocabulary-review/
 │           ├── ReviewCenter.vue       # 复习中心（认读+拼写练习+默写+听音默写四阶段）
 │           ├── DataManage.vue         # 数据管理（JSON导入导出+Excel导入需选词组+按Sheet导出）
 │           ├── AiSettings.vue         # AI 设置（服务商/API Key/接口地址/模型，支持 DeepSeek 与通义千问）
+│           ├── ProxySettings.vue      # 网络代理设置（启用开关/地址端口，测试代理与测试直连）
 │           └── StatsDashboard.vue    # 统计看板（卡片+ECharts图表）
 ├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
 ├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip)，产物在 release/
@@ -131,6 +137,10 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | DELETE | `/api/groups/{id}` | 删除词组（默认词组/有子词组不可删） |
 | GET | `/api/ai/config` | 读取 AI 配置（provider/apiKey/baseUrl/model/configured） |
 | PUT | `/api/ai/config` | 保存 AI 配置 |
+| GET | `/api/proxy/config` | 读取代理配置（enabled/host/port/configured） |
+| PUT | `/api/proxy/config` | 保存代理配置（启用时校验地址与端口），保存即生效无需重启 |
+| POST | `/api/proxy/test` | 测试代理连通性 {host, port}，返回 success/latencyMs/message |
+| POST | `/api/proxy/test-direct` | 测试直连（绕开代理与系统代理属性） |
 
 ## 核心算法：复习调度（ReviewService.generateReviewList）
 1. **强制召回**: last_review_date IS NULL 或距今 > maxDormantDays 天 → 直接入围
@@ -169,6 +179,21 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
   返回 message 形如「本次添加了 N 个，词库已包含 M 个（输入已去重 K 条）」
 - **AI 配置独立于词库数据**: 存在单独的 `ai_config` 表，**JSON 备份导出不含它**（避免泄漏 API Key），
   **导入也不覆盖它**；未配置时点按钮直接提示并引导跳转「AI 设置」
+- **AI / 代理配置都能清空**: 两个设置页都有「清空配置」按钮。
+  AI 侧规则是「API Key / 接口地址 / 模型三项要么都填、要么都清空」，只填一半返回 400；
+  全清空后 `configured=false`，批量AI解析会提示「尚未配置 AI 服务」。
+  代理侧清空即关闭开关并抹掉地址，保存后自动回落直连
+- **网络代理配置**: 存在单独的 `proxy_config` 表，同样**不进 JSON 备份的导出与导入**（避免泄漏代理地址）；
+  只作用于后端出站的 Edge TTS 合成请求（见「音频发音系统」）。左侧菜单「🌐 网络代理」页面配置，
+  保存后立即重建并热替换进程内唯一的 HttpClient，**无需重启**，
+  正在跑的批量生成从下一个单词开始走新代理
+- **代理的两个硬限制（都是 JDK `java.net.http.HttpClient` 的行为，实测确认）**:
+  - **只支持 HTTP 代理**：`Proxy.Type.SOCKS` 会被静默忽略（`OpeningHandshake.proxyFor` 直接返回 null），
+    所以界面上不提供 SOCKS 选项
+  - **只支持免认证代理**：CONNECT 隧道的请求走 `PlainTunnelingConnection` 里的 `Exchange` 而不是
+    `MultiExchange`，`AuthenticationFilter` 压根不参与，收到 407 也不会补发 `Proxy-Authorization`。
+    实测带账号密码的代理必返 407，所以配置里**不设账号密码字段**（留着只会让人误填），
+    提示语也直接告诉用户改用免认证的本地代理（如 Clash/V2Ray 端口、SSH -D 转发）
 - **AI 接入协议**: OpenAI 兼容 `/chat/completions`，因此 DeepSeek（`https://api.deepseek.com` + `deepseek-chat`）
   和通义千问（`https://dashscope.aliyuncs.com/compatible-mode/v1` + `qwen-plus`）都能用，也支持自定义网关；
   每批 10 个词、超时 90s，返回内容要宽容解析（去代码块围栏、按 input 对齐），信息全空的条目判为解析失败不入库
@@ -177,6 +202,15 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 ## 音频发音系统
 - **实现方式**: Java 原生实现 Edge TTS WebSocket 协议（EdgeTtsService），无需 Python 依赖
 - **协议细节**: WSS 连接微软 Edge 在线 TTS 服务，DRM token 生成 (SHA-256)，SSML 语音合成请求，二进制 MP3 音频接收
+- **Sec-MS-GEC v2 token（2026-10 微软强制）**: 微软把 token 从 v1 换成 v2，**版本前缀也从 `1-` 改成 `2-`**，
+  两者必须配套，否则握手直接 403。算法在 `EdgeTtsDrm`，逐行移植 rany2/edge-tts 的 `drm.py`：
+  - 格式 `<CS64 16位hex>-<SHA256 64位hex>`，两段共用同一条盐串 = ticks（Windows 文件时间，向下取整到 5 分钟）+ trustedClientToken
+  - **SHA256 段不是标准 SHA-256**：第一块的调度表、第 14 轮轮常量都被换成上游预置的魔数，
+    再用修正项补回数据相关部分。写成「标准 SHA256(57个0 + 盐串)」会算出错误 token 并 403
+  - Σ0/Σ1 是三个**循环右移**的异或，必须带左移回绕项；移植时最容易漏的就是这部分
+  - 32 位无符号运算直接用 Java int 自然溢出，右移一律 `>>>`；`%.0f` 用 Locale.ROOT
+- **时钟校准**: 握手 403 时取服务器 `Date` 头算出偏差写入 `clockSkewMillis` 后重试一次
+  （对应 edge-tts 的 handle_client_response_error），每个进程最多校时一次
 - **默认语音**: en-US-EmmaMultilingualNeural
 - **音频缓存**: 文件存储在 `review-backend/audio/` 目录，按单词小写命名（如 `hello.mp3`）
 - **异步生成**: 首次访问时异步生成，前端轮询等待就绪
@@ -184,6 +218,12 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **防重复**: 批量任务运行中不会重复启动
 - **自动播放**: 认读、拼写练习和听音默写阶段切换单词时自动播放，默写阶段不自动播放（拼写提交后播放一次）
 - **手动播放**: 四个阶段卡片均有 🔊 播放按钮可手动触发
+- **走代理**: 合成请求用 `ProxyConfigService.getHttpClient()`（进程内**共用一个** HttpClient，
+  只在首次取用和保存配置时重建；批量生成几百个单词全程复用，合成路径上只是一次 volatile 读，
+  既不查库也不做字符串比较）。未启用代理时沿用 JDK 默认（读 `http.proxyHost` 等系统属性）；
+  「测试直连」则强制 NO_PROXY，用来判断本机到底能不能直连。探测地址为
+  `https://speech.platform.bing.com/`，收到任意 HTTP 状态码即视为链路通
+  （407 除外：说明代理需要账号密码认证，JDK 不支持，见上文限制）
 
 ## 开发注意事项
 - 前端仅适配 1920×1080 及以上分辨率，不做移动端

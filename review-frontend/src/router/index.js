@@ -6,6 +6,7 @@ import DataManage from '../views/DataManage.vue'
 import ReviewCenter from '../views/ReviewCenter.vue'
 import StatsDashboard from '../views/StatsDashboard.vue'
 import AiSettings from '../views/AiSettings.vue'
+import ProxySettings from '../views/ProxySettings.vue'
 
 const routes = [
   {
@@ -18,7 +19,8 @@ const routes = [
       { path: 'data', name: 'Data', component: DataManage },
       { path: 'review', name: 'Review', component: ReviewCenter },
       { path: 'stats', name: 'Stats', component: StatsDashboard },
-      { path: 'ai', name: 'AI', component: AiSettings }
+      { path: 'ai', name: 'AI', component: AiSettings },
+      { path: 'proxy', name: 'Proxy', component: ProxySettings }
     ]
   }
 ]

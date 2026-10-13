@@ -35,6 +35,9 @@
         <el-menu-item index="/ai">
           <span>🤖 AI 设置</span>
         </el-menu-item>
+        <el-menu-item index="/proxy">
+          <span>🌐 网络代理</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
