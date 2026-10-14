@@ -103,13 +103,17 @@ for i in $(seq 1 60); do
         READY=1
         break
     fi
+    # 打点表示还在等，否则窗口像卡死了，用户会以为没反应
+    printf "."
     sleep 1
 done
 
 if [ "$READY" = "1" ]; then
+    echo ""
+    echo ""
     echo "✅ 启动成功！"
     echo "🌐 浏览器即将打开 ${URL}"
-    echo "   关闭本窗口或按 Ctrl+C 即可停止程序"
+    echo "   程序在后台运行，关掉本窗口不会停止它 —— 要停止请运行 ./stop.sh"
     echo ""
     # 自动打开浏览器（失败不报错）
     case "$(uname -s)" in
@@ -119,6 +123,7 @@ if [ "$READY" = "1" ]; then
     # 前台等待，保持窗口与进程同生命周期
     wait "$APP_PID"
 else
+    echo ""
     echo "❌ 启动超时（60 秒未就绪），最后 30 行日志："
     echo "----------------------------------"
     tail -30 "$LOG_FILE"

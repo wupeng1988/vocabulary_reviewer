@@ -1,10 +1,18 @@
 @echo off
 REM ============================================================
 REM  Word Review Pro 启动脚本（Windows）
-REM  双击本文件即可启动；关闭本窗口即自动停止程序
+REM  双击本文件即可启动。程序在后台运行，关掉本窗口不会停止它 —— 要停止请运行 stop.bat
+REM
+REM  [注意] 本文件在仓库里是 UTF-8 + LF，release.sh 打包时会转成 GBK + CRLF 再放进
+REM     发布包。原因：cmd.exe 是按系统代码页（中文 Windows 为 936/GBK）读批处理
+REM     的，直接交付 UTF-8 文件会被按 GBK 错切行 —— 表现为 REM 整行丢失、
+REM     后面的破折号被当成命令、中文全部变乱码（"没有找到" 变成 "娌℃湁鎵惧埌"）。
+REM     LF 换行同样会让多行 if (...) 块解析错乱。所以：改完别直接拿这个文件去 Windows
+REM     上跑，走 ./release.sh --platform windows-x86_64 打包。
 REM ============================================================
 setlocal enabledelayedexpansion
-chcp 65001 >nul
+REM 强制控制台代码页 = GBK，和交付编码保持一致（即便系统勾了 UTF-8 beta 选项也稳）
+chcp 936 >nul
 cd /d "%~dp0"
 
 set "JAR=WordReviewPro.jar"
@@ -49,6 +57,7 @@ if not exist "%JAR%" (
 echo ========================================
 echo    Word Review Pro 启动中......
 echo ========================================
+echo    首次启动会扫描并补齐缺失的发音，那一步在后台跑，
 echo    Java: %JAVA_BIN%
 echo    端口: %PORT%   (想换端口改 application.properties)
 echo    日志: %LOG%
@@ -63,12 +72,16 @@ if not defined APP_PID (
     exit /b 1
 )
 echo    进程 PID: %APP_PID%
+REM 记下 PID 写进 app.pid，stop.bat 靠它停止程序
+echo %APP_PID%> "%~dp0app.pid"
 
 REM ---------- 4. 轮询等待就绪（只用 PowerShell，避免依赖 curl） ----------
 set /a TRIES=0
 :WAIT_LOOP
 set /a TRIES+=1
 if %TRIES% GEQ 60 goto TIMEOUT
+REM 打点表示还在等（否则窗口像卡死了，用户会直接 Ctrl+C）
+<nul set /p "=."
 ping -n 2 127.0.0.1 >nul
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ok=$false; try { $r=Invoke-WebRequest -Uri '%URL%/api/review/config' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { $ok=$true } } catch { }; if ($ok) { exit 0 } else { exit 1 }" >nul 2>nul
 if not errorlevel 1 goto READY
@@ -76,9 +89,12 @@ goto WAIT_LOOP
 
 :READY
 echo.
+echo.
 echo [OK] 启动成功！
 echo      浏览器即将打开 %URL%
-echo      关闭本窗口即可停止程序
+echo.
+echo      注意：程序是后台运行的，**直接点窗口的 X 关掉它，程序不会停**。
+echo      要停止请双击本目录的 stop.bat（或留在本窗口按任意键）。
 echo.
 start "" "%URL%"
 
@@ -86,10 +102,12 @@ REM ---------- 5. 本窗口关闭 / Ctrl+C 时清理进程 ----------
 echo 按任意键停止程序并退出...
 pause >nul
 taskkill /PID %APP_PID% /F >nul 2>nul
+if exist "%~dp0app.pid" del "%~dp0app.pid" >nul 2>nul
 echo 已停止。
 exit /b 0
 
 :TIMEOUT
+echo.
 echo.
 echo [X] 启动超时（60 秒未就绪），最近日志：
 echo ----------------------------------
@@ -98,5 +116,6 @@ if exist "%~dp0app-out.log" powershell -NoProfile -Command "Get-Content -Tail 30
 echo ----------------------------------
 powershell -NoProfile -Command "if ((Test-Path '%~dp0app-err.log') -and (Select-String -Path '%~dp0app-err.log' -Pattern 'already in use','The file is locked' -Quiet)) { Write-Host ''; Write-Host '提示: 数据库被占用了，多半是程序已经开着（可能重复双击了）。'; Write-Host '      请先关掉已有的 Word Review Pro 窗口，或直接访问 %URL%' }"
 taskkill /PID %APP_PID% /F >nul 2>nul
+if exist "%~dp0app.pid" del "%~dp0app.pid" >nul 2>nul
 pause
 exit /b 1

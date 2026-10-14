@@ -41,6 +41,12 @@
         <template #tip>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
             仅支持 .xls / .xlsx 格式，A-E 列依次对应：生词、音标、含义、例句、例句释义
+            <el-link
+              type="primary"
+              href="/api/words/export-template"
+              :underline="false"
+              style="font-size: 12px; margin-left: 8px; vertical-align: baseline"
+            >下载导入模板</el-link>
           </div>
         </template>
       </el-upload>

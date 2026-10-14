@@ -82,9 +82,21 @@ public class ExcelExportService {
         }
     }
 
-    private void createSheet(Workbook workbook, String sheetName, List<Word> words) {
-        Sheet sheet = workbook.createSheet(sheetName);
+    /**
+     * 空模板：只有标题行、没有任何数据行。
+     * 用户照着列顺序填表，避免列对不上导致导入失败。
+     */
+    public byte[] exportTemplate() throws IOException {
+        try (Workbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.createSheet("模板");
+            writeHeaderRow(workbook, sheet);
+            workbook.write(out);
+            return out.toByteArray();
+        }
+    }
 
+    private void writeHeaderRow(Workbook workbook, Sheet sheet) {
         Row headerRow = sheet.createRow(0);
         for (int i = 0; i < HEADERS.length; i++) {
             Cell cell = headerRow.createCell(i);
@@ -95,6 +107,14 @@ public class ExcelExportService {
             style.setFont(font);
             cell.setCellStyle(style);
         }
+        for (int i = 0; i < HEADERS.length; i++) {
+            sheet.autoSizeColumn(i);
+        }
+    }
+
+    private void createSheet(Workbook workbook, String sheetName, List<Word> words) {
+        Sheet sheet = workbook.createSheet(sheetName);
+        writeHeaderRow(workbook, sheet);
 
         for (int i = 0; i < words.size(); i++) {
             Word w = words.get(i);
@@ -104,10 +124,6 @@ public class ExcelExportService {
             row.createCell(2).setCellValue(w.getMeaning() != null ? w.getMeaning() : "");
             row.createCell(3).setCellValue(w.getExampleSentence() != null ? w.getExampleSentence() : "");
             row.createCell(4).setCellValue(w.getExampleMeaning() != null ? w.getExampleMeaning() : "");
-        }
-
-        for (int i = 0; i < HEADERS.length; i++) {
-            sheet.autoSizeColumn(i);
         }
     }
 

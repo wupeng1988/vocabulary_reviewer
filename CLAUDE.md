@@ -74,7 +74,7 @@ vocabulary-review/
 │           ├── ProxySettings.vue      # 网络代理设置（启用开关/地址端口，测试代理与测试直连）
 │           └── StatsDashboard.vue    # 统计看板（卡片+ECharts图表）
 ├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
-├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip)，产物在 release/
+├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip|--platform)，产物在 release/
 ├── packaging/                         # 发布包内的启动脚本与说明文档（start.sh/start.bat/README.txt/README.md/application.properties）
 └── 本地智能单词复习系统.md             # 需求文档
 ```
@@ -100,19 +100,63 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 ./release.sh              # 完整包（含内置 JRE）→ release/WordReviewPro-<版本>-<系统>-<架构>.zip
 ./release.sh --no-jre     # 只有 jar + 启动脚本，对方需自装 Java 11+
 ./release.sh --no-zip     # 只出目录不压缩
+./release.sh --no-audio   # 不内置发音缓存（包小约 50MB，对方首运行要联网生成）
+./release.sh --platform windows-x86_64   # 在 macOS/Linux 上交叉打 Windows 包
 ```
-包结构：`WordReviewPro.jar`（后端 + 前端静态页）+ `jre/`（jlink 裁剪运行时）+ `Start.command`/`start.sh`/`start.bat` + `README.txt`（速查）+ `README.md`（小白上手指南）。对方解压后双击即可，浏览器自动打开 http://localhost:8080。
+`--platform` 支持 `macos-arm64` / `macos-x86_64` / `linux-x86_64` / `linux-aarch64` / `windows-x86_64`，不传就跟随本机。
+包结构：`WordReviewPro.jar`（后端 + 前端静态页）+ `jre/`（jlink 裁剪运行时）+ `Start.command`/`start.sh`/`start.bat` + `stop.sh`/`stop.bat` + `audio/`（发音缓存）+ `README.txt`（速查）+ `README.md`（小白上手指南）。对方解压后双击即可，浏览器自动打开 http://localhost:8080。
+
+**程序是后台运行的，关掉启动窗口并不会停**：`start.bat` 用 PowerShell `Start-Process -WindowStyle Hidden -PassThru` 起 java，它和 cmd 窗口是两个进程。
+  所以两个启动脚本会把 PID 写进包目录的 `app.pid`，另外提供 `stop.bat`/`stop.sh` 作为正规停止方式
+ （先读 `app.pid`，读不到就按端口用 `netstat -ano` / `lsof` 兜底找）。文档里的「关窗口就停了」是错的，
+  README.txt / README.md / 启动脚本的提示语都按实际情况写
 
 打包链路与约束：
 - `npm run build` → `review-frontend/dist`，由 **pom 的 `release` profile** 作为额外资源并入 `BOOT-INF/classes/static/`
 - **该 profile 不激活就完全不生效**：`./dev.sh start` 依旧是后端 8080 + 前端 5173 两服务，行为不变
 - `SpaFallbackConfig`（`config/` 包）：非 `/api`、非 `/h2-console`、无扩展名的 GET 请求回退到 `index.html`，支撑 history 路由刷新；**没有 `static/index.html` 时直接放行**，开发环境等同改动前。类名不能与 `@Bean` 方法同名，否则 `BeanDefinitionOverrideException` 启动失败
 - `release.sh` 结束时执行 `mvn clean`，避免 `target/classes/static` 残留污染后续 `spring-boot:run`
-- jlink 模块列表见 `release.sh`，只在同架构系统上可生成 → **在谁的机器上打包就只能给谁用**
+- jlink 模块列表见 `release.sh`
+- **交叉打 Windows 包（`--platform windows-x86_64`，可以在 Mac 上执行）**：
+  jar 与前端是平台无关的，**只有 `jre/` 需要换**。脚本会从 Adoptium 下载同主版本的
+  Windows JDK 到 `release/.jdk-cache/windows-x64/`（仅首次，约 180MB，之后复用），
+  再用**本机 jlink** 的 `--module-path` 指向它的 jmods。原理是 jlink 只把 jmods
+  里的类和平台原生库打包、**不校验宿主平台**，所以 macOS 的 jlink + Windows 的 jmods
+  能直接产出 `bin/java.exe`（PE32+ x86-64）+ 全套 `api-ms-win-*.dll` + `bin/server/jvm.dll`。
+  已实测：本机 jlink 17.0.17 + Temurin 17.0.20 Windows jmods → 57MB / 210 文件，可用。
+  **不能反过来用 WSL 打 Windows 包**：WSL 里的 jlink 产出的是 Linux 运行时
+- 交叉打包时**跳过「跑一下 java -version」的自检**（目标平台的二进制本机执行不了），
+  改为校验 `bin/java.exe` 存在 + 文件头是 PE 魔数 `MZ` + `lib/modules` 存在。
+  注意 **jlink 生成的 `jre/release` 只有 `JAVA_VERSION` 和 `MODULES` 两个字段**，
+  **没有 `OS_NAME`/`OS_ARCH`**，别拿它判断平台（本机包和交叉包都一样）
+- `Start.command` 只在目标平台是 `macos-*` 时才放进包里，Windows 包不放
 - 单机单用户：`~/worddb` 为 H2 文件库，**同一时间只能跑一个实例**，与 dev 实例并存会报 `The file is locked`
-- 发布包不内置 `audio/` 缓存（49MB 且是用户自己的词），首次运行按需联网生成
+- **发布包内置发音缓存**（`review-backend/audio/` 的 4595 个 mp3 / 54MB 一并拷进包里）。
+  不带的话对方首次运行要把几千个词的发音联网生成一遍，按 1s+随机1-2s 一个算要好几个小时。
+  音频按单词名存、纯数据，不含任何用户配置或词库内容。
+  `--no-audio` 可出不带缓存的小包（约 90MB vs 145MB）。
+  拷贝时会：① 把文件名里的 U+2011 等 Unicode 连字符归一化成 ASCII `-`（Windows 解压会变乱码，
+  对不上的那几个词首运行自动重新生成）；② 删掉 macOS 的 `.DS_Store`
+- **发布包里没有任何用户数据或敏感信息**（每次打包都该成立，改 release.sh 时别破坏）：
+  - **不含 H2 数据库**：AI 配置（API Key）、网络代理地址、词库、复习记录全在用户家目录的
+    `~/worddb.mv.db`，`release.sh` 只拷 jar / jre / 脚本 / README / application.properties / audio
+  - jar 内的 `application.yml` 只有本地 H2 默认连接（`sa` + 空密码，单机自用），无外泄面
+  - 仓库里的 `data/*.json` 备份也**不含 ai_config / proxy_config**（`DataExportImportService`
+    导出时就没带这两张表），`data/` 目录也不会被拷进包
+  - 包根目录 `application.properties` 只有 `server.port`
+- **音频目录是相对路径 `audio`**（`wordreview.audio-dir`），按进程 CWD 解析；
+  `start.bat` 用 `-WorkingDirectory`、`start.sh` 用 `cd "$APP_HOME"` 都切到包目录，
+  所以包里放 `audio/` 就能直接被找到，新生成的 mp3 也写回包目录
 - **端口可改**：包根目录 `application.properties`（`server.port=`，默认 8080）。启动脚本解析它做端口占用检测/就绪探测/开浏览器，并传 `--server.port`（**必须在 `-jar` 之后**，放前面 JVM 会报 `Unrecognized option`）；Spring 自身也读 `file:./application.properties` 覆盖 jar 内 `application.yml`。脚本内**不硬编码端口**；dev 侧 `vite.config.js` proxy 仍写死 8080
 - 包内文件名一律 ASCII（`Start.command`/`README.txt`/`README.md`）：macOS 的 `zip` 不设 UTF-8 文件名标志，中文名在 Windows 解压会变乱码；`release.sh` 构建后用 python3 校验非 ASCII 文件名并失败退出
+- **`start.bat` 必须以 GBK + CRLF 交付，不能直接给 UTF-8 + LF**（Windows 真机实测踩过）：
+  cmd.exe 是**按系统代码页**（中文 Windows = 936/GBK）读批处理文件的，`chcp 65001` 也救不回来——
+  UTF-8 的中文三字节会被按 GBK 错切行，表现为 **`REM` 整行丢失、后面的 `-----` 被当成命令、
+  中文全变乱码**（`没有找到` → `娌℃湁鎵惧埌`）；LF 换行还会让多行 `if (...)` 块解析错乱。
+  做法是：**仓库里保持 UTF-8 + LF 方便编辑**，`release.sh` 组装发布目录时用 python3 转成
+  `encoding='gbk', newline='
+\r\n'` 再放进包，并把 `chcp 65001` 改成 `chcp 936`。
+  转码前会校验 GBK 可编码性——**emoji（如 ⚠️）和部分符号 GBK 编不了**，会直接失败退出
 
 ## API 接口
 | 方法 | 路径 | 功能 |
@@ -128,6 +172,7 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | POST | `/api/words/batch-ai` | 批量AI解析添加 {words:[...], groupId?}，返回 added/existing/duplicated/failed/failedWords/message |
 | GET | `/api/words/export` | 导出全部数据为 JSON version 2（含词组树和单词词组关系） |
 | GET | `/api/words/export-excel` | 按词组导出 Excel，每个词组一个 Sheet（含「未分组」Sheet）|
+| GET | `/api/words/export-template` | 下载 Excel 导入模板（只有标题行的空表，`ExcelExportService.exportTemplate`）|
 | GET | `/api/review/config` | 获取复习配置 |
 | PUT | `/api/review/config` | 更新复习配置 |
 | GET | `/api/review/generate` | 生成复习列表（核心，返回含 recogOnly 字段） |
@@ -172,6 +217,8 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **词组删除限制**: 默认词组不可删除；有子词组的词组需先删除子词组；删除成环防护（上级不能是自身子孙）
 - **Excel 导入需选词组**: 数据管理导入 Excel 前必须选择目标词组；已存在的单词只新增关联、不重复创建
 - **Excel 按 Sheet 导出**: 每个词组一个 Sheet（A-E 列同导入格式），未归类单词导出到「未分组」Sheet，空词组不生成 Sheet
+- **Excel 导入模板**: `/api/words/export-template` 出一个只有标题行的空表，数据管理页导入区下方有「下载导入模板」链接。
+  标题行与导出共用 `ExcelExportService.HEADERS`，列顺序永远一致；导入按列下标读且跳过第 1 行，所以空模板原样导入返回 0 个词不报错
 - **JSON 备份 v2**: 导出含词组树（parentCode 引用、sortOrder）和每个单词的 groups(code 数组)；老版本 v1（无词组关系）导入时仅补充默认词组归属，不破坏现有词组
 - **最近 N 次拼写错误次数 (recentSpellWrong)**: 拼写练习 / 默写 / 听音默写 三个阶段的**每一次提交**都算一次拼写。
   Word 上存 `spell_recent_history`（'1'=拼错，'0'=拼对，末尾最新，长度恒 ≤ 窗口次数）+ 冗余列 `recent_spell_wrong`。

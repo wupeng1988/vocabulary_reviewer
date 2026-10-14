@@ -187,6 +187,21 @@ public class WordController {
         }
     }
 
+    /** 下载 Excel 导入模板：只有标题行的空表，用户照着列顺序填 */
+    @GetMapping("/export-template")
+    public ResponseEntity<byte[]> exportTemplate() {
+        try {
+            byte[] data = excelExportService.exportTemplate();
+            String filename = URLEncoder.encode("词库导入模板.xlsx", StandardCharsets.UTF_8);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + filename)
+                    .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(data);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(null);
+        }
+    }
+
     /** 导出单词为 Excel：每个词组一个 Sheet */
     @GetMapping("/export-excel")
     public ResponseEntity<byte[]> exportExcel() {
