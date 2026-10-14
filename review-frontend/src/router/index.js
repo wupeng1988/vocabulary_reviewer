@@ -7,6 +7,7 @@ import ReviewCenter from '../views/ReviewCenter.vue'
 import StatsDashboard from '../views/StatsDashboard.vue'
 import AiSettings from '../views/AiSettings.vue'
 import ProxySettings from '../views/ProxySettings.vue'
+import DifficultSettings from '../views/DifficultSettings.vue'
 
 const routes = [
   {
@@ -15,12 +16,15 @@ const routes = [
     redirect: '/words',
     children: [
       { path: 'words', name: 'Words', component: WordManage },
+      // 易错词库：复用词库管理页面，difficultMode 只做减法（固定查易错词组 + 换按钮）
+      { path: 'difficult-words', name: 'DifficultWords', component: WordManage, props: { difficultMode: true } },
       { path: 'groups', name: 'Groups', component: GroupManage },
       { path: 'data', name: 'Data', component: DataManage },
       { path: 'review', name: 'Review', component: ReviewCenter },
       { path: 'stats', name: 'Stats', component: StatsDashboard },
       { path: 'ai', name: 'AI', component: AiSettings },
-      { path: 'proxy', name: 'Proxy', component: ProxySettings }
+      { path: 'proxy', name: 'Proxy', component: ProxySettings },
+      { path: 'difficult', name: 'Difficult', component: DifficultSettings }
     ]
   }
 ]

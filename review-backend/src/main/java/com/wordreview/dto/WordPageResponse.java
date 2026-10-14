@@ -27,6 +27,8 @@ public class WordPageResponse {
         private Integer spellWrong;
         private Boolean isDormant;
         private Boolean recogOnly;
+        /** 最近 N 次拼写（拼写练习/默写/听音默写）里拼错的次数，N 见易错词配置 */
+        private Integer recentSpellWrong;
         private List<GroupNodeDTO> groups;   // 所属词组
     }
 }

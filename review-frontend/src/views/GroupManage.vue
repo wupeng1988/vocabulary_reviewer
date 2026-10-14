@@ -26,6 +26,7 @@
         <el-table-column prop="code" label="编号" width="130">
           <template #default="{ row }">
             <el-tag v-if="row.isDefault" type="danger" size="small" style="margin-right: 6px">默认</el-tag>
+            <el-tag v-if="row.isDifficult" type="warning" size="small" style="margin-right: 6px">易错</el-tag>
             <span>{{ row.code }}</span>
           </template>
         </el-table-column>
@@ -60,7 +61,7 @@
             <el-button type="primary" size="small" link @click="openEditDialog(row)">编辑</el-button>
             <el-popconfirm title="确定删除该词组？" @confirm="deleteGroup(row)">
               <template #reference>
-                <el-button type="danger" size="small" link :disabled="row.isDefault">删除</el-button>
+                <el-button type="danger" size="small" link :disabled="row.isDefault || row.isDifficult">删除</el-button>
               </template>
             </el-popconfirm>
           </template>

@@ -26,6 +26,9 @@ public class WordGroupService {
 
     public static final String DEFAULT_GROUP_NAME = "默认词组";
 
+    /** 内置易错词组名称：拼写连续/累计错误达标的单词自动落进来 */
+    public static final String DIFFICULT_GROUP_NAME = "易错词组";
+
     /** 排序字段 null 安全比较：数值小者靠前，相同时按编号 code 升序，再按 id */
     public static final Comparator<WordGroup> GROUP_ORDER =
             Comparator.comparing(WordGroup::getSortOrder, Comparator.nullsLast(Integer::compareTo))
@@ -44,8 +47,9 @@ public class WordGroupService {
     public void init() {
         try {
             ensureDefaultGroup();
+            ensureDifficultGroup();
         } catch (Exception e) {
-            log.error("初始化默认词组失败", e);
+            log.error("初始化内置词组失败", e);
         }
     }
 
@@ -112,6 +116,98 @@ public class WordGroupService {
         return ensureDefaultGroup().getId();
     }
 
+    /**
+     * 确保内置「易错词组」存在，返回它。
+     * 与默认词组一样是根词组、不可删除；编号自动生成（Gxxx），
+     * 用户可以在词组管理里改名、排序、挂到别的上级下面，但删不掉。
+     */
+    @Transactional
+    public WordGroup ensureDifficultGroup() {
+        // 老数据升级：加列后旧行是 NULL，先统一补 false，否则下面的过滤判断会漏掉
+        backfillNullDifficultFlag();
+
+        List<WordGroup> all = groupRepository.findAll();
+        // 优先认 isDifficult 标记；没有标记时退一步认同名词组，
+        // 避免老备份导入后又多出一个叫「易错词组」的空词组
+        WordGroup difficult = all.stream()
+                .filter(g -> Boolean.TRUE.equals(g.getIsDifficult()))
+                .findFirst()
+                .orElseGet(() -> all.stream()
+                        .filter(g -> DIFFICULT_GROUP_NAME.equals(g.getName()) && !Boolean.TRUE.equals(g.getIsDefault()))
+                        .findFirst()
+                        .orElse(null));
+
+        if (difficult == null) {
+            difficult = new WordGroup();
+            difficult.setCode(generateCode());
+            difficult.setName(DIFFICULT_GROUP_NAME);
+            difficult.setParentId(null);
+            difficult.setSortOrder(0);
+            difficult.setIsDifficult(true);
+            difficult = groupRepository.save(difficult);
+            log.info("已创建内置易错词组: {} ({})", difficult.getName(), difficult.getCode());
+        } else if (!Boolean.TRUE.equals(difficult.getIsDifficult())) {
+            // 复用了同名的历史词组，补上内置标记
+            difficult.setIsDifficult(true);
+            difficult = groupRepository.save(difficult);
+        }
+        backfillDifficultFlag(difficult.getId());
+        return difficult;
+    }
+
+    /** 内置易错词组 */
+    public WordGroup getDifficultGroup() {
+        return ensureDifficultGroup();
+    }
+
+    /** 内置易错词组ID */
+    public Long getDifficultGroupId() {
+        return ensureDifficultGroup().getId();
+    }
+
+    /** 一批单词中当前属于指定词组的那些（一次查询，供复习列表回填易错词状态） */
+    public Set<Long> filterWordIdsInGroup(List<Long> wordIds, Long groupId) {
+        if (wordIds == null || wordIds.isEmpty() || groupId == null) return Collections.emptySet();
+        return memberRepository.findByWordIdIn(wordIds).stream()
+                .filter(m -> groupId.equals(m.getGroupId()))
+                .map(WordGroupMember::getWordId)
+                .collect(Collectors.toSet());
+    }
+
+    /** 某单词是否属于指定词组 */
+    public boolean isWordInGroup(Long wordId, Long groupId) {
+        return wordId != null && groupId != null && memberRepository.existsByWordIdAndGroupId(wordId, groupId);
+    }
+
+    /**
+     * 老备份里可能带有 isDifficult 标记但本机还是空表，或反过来有重名的「易错词组」。
+     * 导入后统一保证：有且只有一个词组被标记为易错词组，名字对得上时优先复用。
+     */
+    private void backfillNullDifficultFlag() {
+        List<WordGroup> pending = groupRepository.findByIsDifficultIsNull();
+        if (pending.isEmpty()) return;
+        for (WordGroup g : pending) {
+            g.setIsDifficult(false);
+        }
+        groupRepository.saveAll(pending);
+        log.info("已为 {} 个历史词组补齐内置易错词组标记", pending.size());
+    }
+
+    private void backfillDifficultFlag(Long difficultId) {
+        List<WordGroup> all = groupRepository.findAll();
+        boolean dirty = false;
+        for (WordGroup g : all) {
+            if (!difficultId.equals(g.getId()) && Boolean.TRUE.equals(g.getIsDifficult())) {
+                g.setIsDifficult(false);
+                dirty = true;
+            }
+        }
+        if (dirty) {
+            groupRepository.saveAll(all);
+            log.info("已清理多余的内置易错词组标记");
+        }
+    }
+
     // ==================== 查询 ====================
 
     /** 词组树（wordCount 为直接归属该词组的单词数） */
@@ -128,6 +224,7 @@ public class WordGroupService {
             node.setParentId(g.getParentId());
             node.setSortOrder(g.getSortOrder());
             node.setIsDefault(g.getIsDefault());
+            node.setIsDifficult(g.getIsDifficult());
             node.setWordCount(counts.getOrDefault(g.getId(), 0L));
             nodeMap.put(g.getId(), node);
         }
@@ -175,6 +272,7 @@ public class WordGroupService {
             ref.setParentId(g.getParentId());
             ref.setSortOrder(g.getSortOrder());
             ref.setIsDefault(g.getIsDefault());
+            ref.setIsDifficult(g.getIsDifficult());
             result.computeIfAbsent(m.getWordId(), k -> new ArrayList<>()).add(ref);
         }
         result.values().forEach(list -> list.sort(
@@ -284,6 +382,9 @@ public class WordGroupService {
                 .orElseThrow(() -> new IllegalArgumentException("词组不存在"));
         if (Boolean.TRUE.equals(group.getIsDefault())) {
             throw new IllegalArgumentException("内置默认词组不可删除");
+        }
+        if (Boolean.TRUE.equals(group.getIsDifficult())) {
+            throw new IllegalArgumentException("内置易错词组不可删除，可以改名或调整排序");
         }
         if (groupRepository.existsByParentId(id)) {
             throw new IllegalArgumentException("该词组下还有子词组，请先删除子词组");

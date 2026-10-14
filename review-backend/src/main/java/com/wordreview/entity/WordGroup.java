@@ -34,4 +34,16 @@ public class WordGroup {
 
     @Column(nullable = false)
     private Boolean isDefault = false;      // 是否内置默认词组
+
+    /**
+     * 是否内置易错词组。
+     * 与「默认词组」一样是系统内置的根词组，不可删除；
+     * 拼写连续错误或最近 N 次拼写错误次数达到阈值的单词会被自动加进来。
+     *
+     * 注意这里**不能**写 nullable = false：Hibernate 增量 DDL 会给老表补 not null，
+     * 而老行没有默认值，H2 会直接报「NULL not allowed」导致整张表的列都加不上、
+     * 之后所有词组查询都挂。加列后由 WordGroupService 启动时统一补 false。
+     */
+    @Column
+    private Boolean isDifficult = false;    // 是否内置易错词组
 }

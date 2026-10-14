@@ -4,7 +4,7 @@
     <el-card class="sticky-search">
       <!-- 第一行：搜索 + 词组筛选 -->
       <el-row :gutter="16" align="middle">
-        <el-col :span="5">
+        <el-col :span="difficultMode ? 12 : 5">
           <el-input
             v-model="keyword"
             placeholder="搜索生词或含义..."
@@ -17,7 +17,7 @@
             </template>
           </el-input>
         </el-col>
-        <el-col :span="7">
+        <el-col v-if="!difficultMode" :span="7">
           <el-tree-select
             v-model="filterGroupId"
             :data="groupOptions"
@@ -53,32 +53,44 @@
       <!-- 第二行：操作按钮组 -->
       <el-row :gutter="16" style="margin-top: 12px">
         <el-col :span="24">
-          <el-button size="small" type="primary" plain @click="openAiDialog">🤖 批量AI解析添加</el-button>
-          <el-button size="small" type="success" @click="openAddDialog">➕ 新增</el-button>
+          <template v-if="!difficultMode">
+            <el-button size="small" type="primary" plain @click="openAiDialog">🤖 批量AI解析添加</el-button>
+            <el-button size="small" type="success" @click="openAddDialog">➕ 新增</el-button>
+            <el-button
+              size="small"
+              :type="batchRunning ? 'warning' : 'success'"
+              :loading="batchChecking"
+              @click="handleAudioButton"
+            >
+              {{ batchRunning ? '音频生成中...' : selectedWords.length > 0 ? '🔊 重新生成音频' : '🔊 生成音频' }}
+            </el-button>
+            <el-button
+              size="small"
+              type="warning"
+              :disabled="selectedWords.length === 0"
+              @click="openAdjustDialog"
+            >
+              🗂️ 调整词组
+            </el-button>
+            <el-button
+              size="small"
+              type="danger"
+              :disabled="selectedWords.length === 0"
+              :loading="batchDeleting"
+              @click="askBatchDelete"
+            >
+              🗑️ 批量删除 ({{ selectedWords.length }})
+            </el-button>
+          </template>
           <el-button
-            size="small"
-            :type="batchRunning ? 'warning' : 'success'"
-            :loading="batchChecking"
-            @click="handleAudioButton"
-          >
-            {{ batchRunning ? '音频生成中...' : selectedWords.length > 0 ? '🔊 重新生成音频' : '🔊 生成音频' }}
-          </el-button>
-          <el-button
+            v-else
             size="small"
             type="warning"
             :disabled="selectedWords.length === 0"
-            @click="openAdjustDialog"
+            :loading="removingFromDifficult"
+            @click="removeFromDifficultGroup"
           >
-            🗂️ 调整词组
-          </el-button>
-          <el-button
-            size="small"
-            type="danger"
-            :disabled="selectedWords.length === 0"
-            :loading="batchDeleting"
-            @click="askBatchDelete"
-          >
-            🗑️ 批量删除 ({{ selectedWords.length }})
+            ➖ 移出易错词组 ({{ selectedWords.length }})
           </el-button>
           <el-button
             size="small"
@@ -132,7 +144,16 @@
 
     <!-- 词库表格 -->
     <el-card>
-      <el-table ref="wordTableRef" :data="words" stripe border style="width: 100%" @selection-change="handleSelectionChange" @sort-change="handleSortChange">
+      <el-table
+        ref="wordTableRef"
+        :data="words"
+        stripe
+        border
+        style="width: 100%"
+        :default-sort="defaultSortProp"
+        @selection-change="handleSelectionChange"
+        @sort-change="handleSortChange"
+      >
         <el-table-column type="selection" width="50" align="center" />
         <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom">
           <template #default="{ row }">
@@ -174,24 +195,45 @@
             <span v-else style="color: #c0c4cc">***</span>
           </template>
         </el-table-column>
-        <el-table-column label="词组" width="180">
+        <el-table-column v-if="!difficultMode" label="词组" width="180">
           <template #default="{ row }">
-            <el-tag v-for="g in row.groups" :key="g.id" size="small" style="margin: 1px 2px" :type="g.isDefault ? 'danger' : 'info'">
+            <el-tag v-for="g in row.groups" :key="g.id" size="small" style="margin: 1px 2px" :type="groupTagType(g)">
               {{ g.name }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="reviewTotal" label="复习次数" width="110" align="center" sortable="custom">
+        <el-table-column
+          prop="recentSpellWrong"
+          label="最近拼错"
+          width="110"
+          align="center"
+          sortable="custom"
+        >
+          <template #header>
+            <el-tooltip
+              :content="`最近 ${spellWindowSize} 次拼写（拼写练习/默写/听音默写）里拼错的次数；窗口次数可在「系统设置 → 易错词配置」调整`"
+              placement="top"
+            >
+              <span>最近拼错 <el-icon style="vertical-align: -2px"><question-filled /></el-icon></span>
+            </el-tooltip>
+          </template>
+          <template #default="{ row }">
+            <el-tag :type="row.recentSpellWrong > 0 ? 'danger' : 'info'" size="small">
+              {{ row.recentSpellWrong ?? 0 }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="!difficultMode" prop="reviewTotal" label="复习次数" width="110" align="center" sortable="custom">
           <template #default="{ row }">{{ row.reviewTotal }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="80" align="center">
+        <el-table-column v-if="!difficultMode" label="状态" width="80" align="center">
           <template #default="{ row }">
             <el-tag :type="row.isDormant ? 'info' : 'success'" size="small">
               {{ row.isDormant ? '休眠' : '活跃' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="仅认读" width="80" align="center" fixed="right">
+        <el-table-column v-if="!difficultMode" label="仅认读" width="80" align="center" fixed="right">
           <template #default="{ row }">
             <el-switch
               v-model="row.recogOnly"
@@ -448,11 +490,20 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Search } from '@element-plus/icons-vue'
+import { Search, QuestionFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { loadGroupTree, toTreeOptions } from '../utils/group'
+
+/**
+ * 易错词库模式：整页复用词库管理，只做减法 ——
+ * 固定查内置易错词组、隐藏词组筛选与新增/AI解析/生成音频/调整词组/批量删除，
+ * 换成一个「移出易错词组」。编辑、删除、自定义复习仍然可用。
+ */
+const props = defineProps({
+  difficultMode: { type: Boolean, default: false }
+})
 
 const router = useRouter()
 const words = ref([])
@@ -496,9 +547,75 @@ const onFilterGroupChange = () => {
   loadWords()
 }
 
-// 排序状态
-const sortField = ref('id')
-const sortOrder = ref('asc')
+// 易错词统计窗口长度（只影响表头提示），默认 30 与后端一致
+const spellWindowSize = ref(30)
+// 内置易错词组ID，易错词库模式下固定按它筛选
+const difficultGroupId = ref(null)
+
+const loadDifficultConfig = async () => {
+  try {
+    const res = await api.get('/difficult/config')
+    if (res.windowSize) spellWindowSize.value = res.windowSize
+    difficultGroupId.value = res.groupId ?? null
+  } catch {
+    // 拿不到就沿用默认值，不影响词库列表
+  }
+}
+
+// ==================== 移出易错词组 ====================
+const removingFromDifficult = ref(false)
+
+/** 把勾选的单词移出易错词组（单词本身保留，若只剩它一个归属会自动落到默认词组） */
+const removeFromDifficultGroup = async () => {
+  if (selectedWords.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定把勾选的 ${selectedWords.value.length} 个单词移出易错词组吗？单词本身和其他词组归属都会保留。`,
+      '移出易错词组',
+      { type: 'warning', confirmButtonText: '移出', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  removingFromDifficult.value = true
+  try {
+    const res = await api.post('/words/batch-delete', {
+      wordIds: selectedWords.value.map(w => w.id),
+      mode: 'group',
+      groupId: difficultGroupId.value
+    })
+    ElMessage.success(res.message || '已移出易错词组')
+    wordTableRef.value?.clearSelection()
+    loadWords()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '移出易错词组失败')
+  } finally {
+    removingFromDifficult.value = false
+  }
+}
+
+/** 词组标签配色：易错词组用警告色，内置默认词组用危险色，其余灰色 */
+const groupTagType = (g) => {
+  if (g.isDifficult) return 'warning'
+  if (g.isDefault) return 'danger'
+  return 'info'
+}
+
+// 排序状态：易错词库默认按「最近拼错」倒序，把拼错最多的排最前；词库管理默认按 ID 正序
+const sortField = ref(props.difficultMode ? 'recentSpellWrong' : 'id')
+const sortOrder = ref(props.difficultMode ? 'desc' : 'asc')
+
+/** 取消排序时回落到的默认排序 */
+const defaultSort = () => ({
+  field: props.difficultMode ? 'recentSpellWrong' : 'id',
+  order: props.difficultMode ? 'desc' : 'asc'
+})
+
+// 表头排序箭头的初始状态，不设的话列表虽然排好了、箭头却不显示
+const defaultSortProp = computed(() => ({
+  prop: sortField.value,
+  order: sortOrder.value === 'desc' ? 'descending' : 'ascending'
+}))
 
 const handleSortChange = ({ prop, order }) => {
   if (prop && order) {
@@ -506,8 +623,9 @@ const handleSortChange = ({ prop, order }) => {
     sortOrder.value = order === 'ascending' ? 'asc' : 'desc'
   } else {
     // 取消排序时恢复默认
-    sortField.value = 'id'
-    sortOrder.value = 'asc'
+    const d = defaultSort()
+    sortField.value = d.field
+    sortOrder.value = d.order
   }
   loadWords()
 }
@@ -668,7 +786,8 @@ const loadWords = async () => {
         keyword: keyword.value || undefined,
         sortField: sortField.value,
         sortOrder: sortOrder.value,
-        groupId: filterGroupId.value || undefined
+        // 易错词库模式固定查内置易错词组（含其子词组），忽略词组筛选下拉
+        groupId: props.difficultMode ? difficultGroupId.value : (filterGroupId.value || undefined)
       }
     })
     words.value = res.content
@@ -1145,9 +1264,12 @@ const saveAdjustGroups = async () => {
   adjustSaving.value = false
 }
 
-onMounted(() => {
-  loadGroups().then(loadWords)
+onMounted(async () => {
   checkBatchStatus()
+  // 易错词库模式必须先拿到易错词组ID再查，否则 groupId 为空会查成整个词库
+  await loadDifficultConfig()
+  await loadGroups()
+  loadWords()
 })
 
 onUnmounted(() => {

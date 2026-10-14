@@ -16,11 +16,12 @@ vocabulary-review/
 │   ├── audio/                         # TTS 音频缓存（约 4187 个 mp3 / 49MB，已入版本库）
 │   └── src/main/java/com/wordreview/
 │       ├── WordReviewApplication.java    # 启动类
-│       ├── entity/Word.java              # 单词实体（含 recogOnly 仅认读标记）
+│       ├── entity/Word.java              # 单词实体（含 recogOnly 仅认读标记 + 最近N次拼写错误追踪）
+│       ├── entity/DifficultConfig.java   # 易错词阈值单例行（窗口次数/连续错误/窗口内累计错误）
 │       ├── entity/AiConfig.java          # AI 配置单例行（provider/apiKey/baseUrl/model，独立于词库数据）
 │       ├── entity/ProxyConfig.java       # 网络代理配置单例行（enabled/host/port，独立于词库数据）
 │       ├── entity/ReviewConfig.java      # 复习配置实体
-│       ├── entity/WordGroup.java         # 词组实体（编号/名称/parentId/sortOrder/isDefault，树形）
+│       ├── entity/WordGroup.java         # 词组实体（编号/名称/parentId/sortOrder/isDefault/isDifficult，树形）
 │       ├── entity/WordGroupMember.java   # 单词-词组多对多关联
 │       ├── repository/WordRepository.java
 │       ├── repository/AiConfigRepository.java
@@ -28,6 +29,7 @@ vocabulary-review/
 │       ├── repository/ReviewConfigRepository.java
 │       ├── repository/WordGroupRepository.java
 │       ├── repository/WordGroupMemberRepository.java
+│       ├── repository/DifficultConfigRepository.java
 │       ├── service/ExcelImportService.java       # Excel 导入（Upsert 逻辑 + 指定词组）
 │       ├── service/ExcelExportService.java       # 按词组 Sheet 导出 Excel
 │       ├── service/ReviewService.java            # 核心调度算法 + 记录结果 + 指定ID复习
@@ -36,7 +38,9 @@ vocabulary-review/
 │       ├── service/EdgeTtsDrm.java               # Sec-MS-GEC v2 token（魔改 SHA-256 + CS64，逐行移植上游 drm.py）
 │       ├── service/AudioGenerationTaskService.java # 音频批量生成任务管理
 │       ├── service/DataExportImportService.java   # JSON 数据导入导出（含词组关系）
-│       ├── service/WordGroupService.java         # 词组树管理 + 单词-词组关联
+│       ├── service/WordGroupService.java         # 词组树管理 + 单词-词组关联 + 内置默认/易错词组
+│       ├── service/DifficultConfigService.java   # 易错词阈值单例读写（两个阈值不得大于窗口次数）
+│       ├── service/DifficultWordService.java     # 最近N次拼写历史维护 + 自动/手动加进易错词组
 │       ├── service/AiConfigService.java          # AI 配置单例读写
 │       ├── service/ProxyConfigService.java       # 代理配置单例读写 + 按配置构造 HttpClient（按签名缓存）
 │       ├── service/AiParseService.java           # 调大模型批量解析（OpenAI 兼容 /chat/completions）
@@ -45,6 +49,7 @@ vocabulary-review/
 │       ├── controller/StatsController.java       # /api/stats/*
 │       ├── controller/AudioController.java       # /api/audio/*
 │       ├── controller/WordGroupController.java   # /api/groups/*
+│       ├── controller/DifficultWordController.java # /api/difficult/*（阈值配置 + 手动加易错词组）
 │       ├── controller/AiController.java          # /api/ai/config
 │       ├── controller/ProxyController.java       # /api/proxy/*（配置读写 + 代理/直连连通性测试）
 │       ├── config/SpaFallbackConfig.java          # 发布包 SPA 路由回退过滤器（dev 环境自动跳过）
@@ -54,15 +59,18 @@ vocabulary-review/
 │   └── src/
 │       ├── main.js                    # 注册 ElementPlus + Router
 │       ├── api/index.js               # Axios 封装（含 exportData、exportExcel）
-│       ├── router/index.js            # 路由: /words, /groups, /review, /stats, /data, /ai, /proxy
+│       ├── router/index.js            # 路由: /words, /difficult-words, /groups, /review, /stats, /data, /ai, /proxy, /difficult
 │       ├── components/Layout.vue      # 左菜单+右内容布局
 │       ├── utils/group.js             # 词组树加载/树选项转换/默认词组查找
 │       └── views/
-│           ├── WordManage.vue         # 词库管理（词组筛选+表格+编辑+删除+调整词组+批量生成音频+复查选框+复习按钮）
+│           ├── WordManage.vue         # 词库管理（词组筛选+表格+编辑+删除+调整词组+批量生成音频+复查选框+复习按钮）；
+│           │                          # 也承载「易错词库」页：路由传 difficultMode=true，固定查易错词组、
+│           │                          # 隐藏词组筛选与新增/AI解析/生成音频/调整词组/批量删除，换成「移出易错词组」
 │           ├── GroupManage.vue        # 词组管理（树形表格，增删改查，子词组）
 │           ├── ReviewCenter.vue       # 复习中心（认读+拼写练习+默写+听音默写四阶段）
 │           ├── DataManage.vue         # 数据管理（JSON导入导出+Excel导入需选词组+按Sheet导出）
 │           ├── AiSettings.vue         # AI 设置（服务商/API Key/接口地址/模型，支持 DeepSeek 与通义千问）
+│           ├── DifficultSettings.vue  # 易错词配置（统计窗口次数/连续错误次数/窗口内累计错误次数）
 │           ├── ProxySettings.vue      # 网络代理设置（启用开关/地址端口，测试代理与测试直连）
 │           └── StatsDashboard.vue    # 统计看板（卡片+ECharts图表）
 ├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
@@ -124,7 +132,7 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | PUT | `/api/review/config` | 更新复习配置 |
 | GET | `/api/review/generate` | 生成复习列表（核心，返回含 recogOnly 字段） |
 | GET | `/api/review/generate-by-ids` | 根据指定单词ID生成复习列表 (?ids=1,2,3) |
-| POST | `/api/review/record` | 上报复习结果 {wordId, mode, result} |
+| POST | `/api/review/record` | 上报复习结果 {wordId, mode, result}，mode 为 RECOG/PRACTICE/SPELL；响应含 addedToDifficult、difficultReason |
 | GET | `/api/stats/dashboard` | 统计看板数据 |
 | GET | `/api/audio/{word}` | 获取单词音频（已存在返回 MP3，否则 202 触发异步生成） |
 | GET | `/api/audio/{word}/status` | 查询音频生成状态（ready/generating） |
@@ -135,6 +143,10 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | POST | `/api/groups` | 新增词组 {code?, name, parentId?, sortOrder?}（code 留空自动生成 Gxxx） |
 | PUT | `/api/groups/{id}` | 更新词组 {code, name, parentId, sortOrder}（防成环校验） |
 | DELETE | `/api/groups/{id}` | 删除词组（默认词组/有子词组不可删） |
+| GET | `/api/difficult/config` | 读取易错词阈值（windowSize/consecutiveWrongLimit/recentWrongLimit + 内置易错词组 name/code/id） |
+| PUT | `/api/difficult/config` | 保存易错词阈值（两个阈值必须 ≤ 窗口次数，否则 400） |
+| POST | `/api/difficult/words/{wordId}/add` | 手动把单词加入内置易错词组，added=false 表示本来就在里面 |
+| GET | `/api/difficult/words/{wordId}` | 单词易错词状态（inDifficultGroup + recentSpellWrong + windowSize） |
 | GET | `/api/ai/config` | 读取 AI 配置（provider/apiKey/baseUrl/model/configured） |
 | PUT | `/api/ai/config` | 保存 AI 配置 |
 | GET | `/api/proxy/config` | 读取代理配置（enabled/host/port/configured） |
@@ -161,8 +173,48 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **Excel 导入需选词组**: 数据管理导入 Excel 前必须选择目标词组；已存在的单词只新增关联、不重复创建
 - **Excel 按 Sheet 导出**: 每个词组一个 Sheet（A-E 列同导入格式），未归类单词导出到「未分组」Sheet，空词组不生成 Sheet
 - **JSON 备份 v2**: 导出含词组树（parentCode 引用、sortOrder）和每个单词的 groups(code 数组)；老版本 v1（无词组关系）导入时仅补充默认词组归属，不破坏现有词组
-- **四阶段复习**: Phase 1 认读(英→中) + Phase 2 拼写练习(显示全部信息+拼写框) + Phase 3 默写(中→英) + Phase 4 听音默写(仅播放音频+拼写)
+- **最近 N 次拼写错误次数 (recentSpellWrong)**: 拼写练习 / 默写 / 听音默写 三个阶段的**每一次提交**都算一次拼写。
+  Word 上存 `spell_recent_history`（'1'=拼错，'0'=拼对，末尾最新，长度恒 ≤ 窗口次数）+ 冗余列 `recent_spell_wrong`。
+  冗余一列是因为要在 SQL 里按它排序，JPA 统计不了字符串里 '1' 的个数。窗口次数可在「易错词配置」改，
+  改小会立刻把历史串截断到新长度并重算错误次数。词库管理的「最近拼错」列排在「复习次数」之前，
+  可服务端排序（`sortField=recentSpellWrong`，已进白名单），表头 tooltip 里写当前窗口次数
+- **易错词库页面** (`/difficult-words`，词库管理正下方菜单): 复用 `WordManage.vue`，路由传 `props: { difficultMode: true }`，
+  做的减法是——固定传 `groupId=<易错词组ID>`（含其子词组）、隐藏「按词组筛选」下拉、
+  表格隐藏 词组/复习次数/状态/仅认读 四列、隐藏 批量AI解析添加/新增/生成音频/调整词组/批量删除 五个按钮，
+  换成「➖ 移出易错词组」（勾选后可用，走既有的 `POST /api/words/batch-delete` `mode=group` + `groupId`，
+  单词保留；若它是唯一归属则自动落到默认词组）。搜索、排序、编辑、删除、自定义复习按钮照常可用。
+  **必须先 await 拿到 difficultGroupId 再查列表**，否则 groupId 为空会查成整个词库。
+  默认排序是「最近拼错」倒序（错得多的排最前），表头通过 `:default-sort` 同步显示箭头；
+  取消排序时也回落到这个默认值，而不是词库管理的 ID 正序
+- **内置易错词组**: 系统启动时自动创建一个根词组「易错词组」（`WordGroup.isDifficult=true`），
+  和默认词组一样**不可删除**（词组管理里删除按钮置灰，后端也拦），但可以改名、排序、挂上级、删单词归属。
+  词组标签在词库管理里是橙色（warning），默认词组仍是红色
+- **自动加入易错词组**: 拼写类阶段（PRACTICE/SPELL）上报结果后判断，满足任一即自动加入并弹提示：
+  1. 连续拼写错误 ≥ consecutiveWrongLimit（默认 3，拼对一次清零）
+  2. 最近 windowSize 次拼写累计错误 ≥ recentWrongLimit（默认 5，不要求连续）
+  已在组里则不重复提示；`/api/review/record` 响应返回 `addedToDifficult`/`difficultReason` 由前端弹警告
+- **手动加入易错词组**: 拼写练习 / 默写 / 听音默写 三张卡片上都有「➕ 加入易错词组」按钮
+  （调 `POST /api/difficult/words/{id}/add`，已在组内返回 added=false 并提示「本来就在」）。
+  词库管理里也可以走既有的「调整词组 → 追加 → 易错词组」
+- **卡片上的易错词状态**: `/api/review/generate` 和 `/generate-by-ids` 的每条都带 `inDifficultGroup`
+  （`ReviewController.toDisplayList` 用一次 `filterWordIdsInGroup` 批量回填，不逐词查库）。
+  前端据此在 `!inDifficultGroup` 时显示按钮、否则换成「✅ 已加入易错词组」标签；
+  自动加入或手动加入成功后就地把 `currentWord.inDifficultGroup` 置 true，不用等下一轮生成列表
+- **易错词配置页面**: 左侧「⚙️ 系统设置」菜单组下的「🎯 易错词配置」（`/difficult`）。
+  三个数字：统计窗口次数（默认 30，上限 100）、连续错误次数（默认 3）、窗口内累计错误次数（默认 5），
+  后两个都必须 ≤ 窗口次数。配置存在 `difficult_config` 单例行，**参与 JSON 备份的导出与导入**
+  （纯数字、无隐私，换机器要保留）
+- **四阶段复习**: Phase 1 认读(英→中) + Phase 2 拼写练习(显示全部信息+拼写框) + Phase 3 默写(中→英) + Phase 4 听音默写(仅播放音频+拼写)。
+  听音默写拼错时的「❌ 错误，请重新输入」标签和下方单词详情块必须各自包一层 `<div>`：
+  外层卡片是 `text-align:center`，两者都是 inline-block 会挤到同一行。详情块给定 `width:480px; margin:0 auto` 居中加宽
 - **五种复习模式**: 完整复习(认读+拼写+默写) / 仅认读 / 仅拼写练习 / 仅默写 / 仅听音默写
+- **recordResult 的三种 mode 口径**（`ReviewService.recordResult`）:
+  - `RECOG` 认读 —— 只更新认读统计 + 复习次数 + 连续正确数
+  - `PRACTICE` 拼写练习 —— **只**维护拼写错误追踪和易错词组判断，不动 `reviewTotal`/`lastReviewDate`/
+    `consecutiveCorrect`/`spellCorrect`/`spellWrong`。拼写练习是看着释义写，比默写简单，
+    混进调度统计会打乱原有排序，所以刻意保持它「不计入复习统计」的老行为
+  - `SPELL` 默写 + 听音默写 —— 沿用原有默写统计口径，再叠加上面的拼写错误追踪
+  三个阶段的前端上报都走 `ReviewCenter.reportSpellingResult()`，自动加易错词组的提示也从它的响应里取
 - **自定义复习**: 词库管理页面选中单词后可自定义阶段组合（认读/拼写练习/默写/听音默写可复选），跳转到复习中心执行
 - **仅认读标记 (recogOnly)**: 标记为仅认读的单词不参与拼写练习、默写和听音默写阶段
 - **休眠判定**: consecutive_correct >= 5 → is_dormant=true
@@ -244,5 +296,14 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - 词库管理表格左侧有复选框，选中后可「调整词组」或点击复习按钮自定义阶段复习
 - 词库管理表格 **ID 列可点击**（`.id-link` 加下划线+主色提示），点开只读的「查看单词」弹窗：
   字段与布局跟编辑弹窗一致，所有输入框 `disabled`，底部只有「关闭」
+- **同一组件挂多个路由时，`<router-view>` 必须绑 `:key`**（`Layout.vue` 里是 `:key="route.fullPath"`）。
+  `/words` 和 `/difficult-words` 挂的都是 `WordManage`，Vue Router 在「同组件不同路由」之间跳转会
+  **复用组件实例、不重新挂载**，`onMounted` 不执行，`words`/`keyword`/`filterGroupId` 原样留着——
+  表现是换个菜单表格还是旧数据、在新页面点完搜索再切回去整页空掉。
+  以后再加共用组件的路由不用改这里，但别把这个 `:key` 去掉
+- **给已有表加列时不要写 `nullable = false`**：Hibernate 增量 DDL 会生成 `alter table xxx add column yyy integer not null`，
+  H2 对已有数据直接报「NULL not allowed」，**该列整条 DDL 失败**，表里没有这列，之后所有查询都炸
+  （实测 `word_group.is_difficult` 就踩过）。列声明写普通 `@Column`，启动时用 `findByXxxIsNull()` 补默认值，
+  代码里再做 null 兜底
 - 词组树状下拉使用 el-tree-select（check-strictly 独立勾选，含子词组），词组选项用 `utils/group.js` 的 toTreeOptions 转换
 - 分页查询接口支持 sortField（默认 id）和 sortOrder（默认 asc）参数

@@ -1,5 +1,6 @@
 package com.wordreview.service;
 
+import com.wordreview.entity.DifficultConfig;
 import com.wordreview.entity.ReviewConfig;
 import com.wordreview.entity.Word;
 import com.wordreview.repository.ReviewConfigRepository;
@@ -22,6 +23,8 @@ public class ReviewService {
 
     private final WordRepository wordRepository;
     private final ReviewConfigRepository configRepository;
+    private final DifficultConfigService difficultConfigService;
+    private final DifficultWordService difficultWordService;
 
     /** 初始化默认配置 */
     @PostConstruct
@@ -155,37 +158,77 @@ public class ReviewService {
     }
 
     /**
-     * 记录单次复习结果
+     * 记录单次复习结果。
+     *
+     * 模式口径：
+     *   RECOG    认读 —— 只更新认读统计与复习次数
+     *   PRACTICE 拼写练习 —— 只累计拼写错误追踪 + 判易错词组，**不动**复习次数/连续正确数
+     *                        （拼写练习是看着释义写，比默写简单，混进调度统计会打乱原有排序）
+     *   SPELL    默写 / 听音默写 —— 沿用原有默写统计口径，再累计拼写错误追踪 + 判易错词组
+     *
+     * 拼写错误追踪（PRACTICE / SPELL 都算一次拼写）：
+     *   spell_recent_history 追加 '1'/'0' 并按窗口截断，recent_spell_wrong 同步重算，
+     *   consecutive_spell_wrong 拼对清零、拼错累加。
+     *
+     * @return 上报结果：是否自动加入了易错词组、触发原因、当前最近 N 次拼错次数
      */
     @Transactional
-    public void recordResult(Long wordId, String mode, boolean result) {
+    public Map<String, Object> recordResult(Long wordId, String mode, boolean result) {
         Word word = wordRepository.findById(wordId)
                 .orElseThrow(() -> new IllegalArgumentException("单词不存在，ID: " + wordId));
 
-        // 更新对应模式的正确/错误计数
-        if ("RECOG".equals(mode)) {
+        String m = mode == null ? "" : mode.trim().toUpperCase(Locale.ROOT);
+        boolean isSpelling = "PRACTICE".equals(m) || "SPELL".equals(m);
+        if (!"RECOG".equals(m) && !isSpelling) {
+            throw new IllegalArgumentException("无效的复习模式: " + mode + "，仅支持 RECOG / PRACTICE / SPELL");
+        }
+
+        Map<String, Object> info = new HashMap<>();
+
+        DifficultConfig spellingConfig = isSpelling ? difficultConfigService.get() : null;
+
+        if (isSpelling) {
+            // 窗口长度走 windowSize()：配置行缺值时兜底 30，避免 unboxing NPE
+            int windowSize = difficultConfigService.windowSize();
+            difficultWordService.trackSpelling(word, result, windowSize);
+            info.put("windowSize", windowSize);
+
+            if ("SPELL".equals(m)) {
+                if (result) {
+                    word.setSpellCorrect(word.getSpellCorrect() + 1);
+                } else {
+                    word.setSpellWrong(word.getSpellWrong() + 1);
+                }
+                applyReviewProgress(word, result);
+            }
+        } else {
             if (result) {
                 word.setRecogCorrect(word.getRecogCorrect() + 1);
             } else {
                 word.setRecogWrong(word.getRecogWrong() + 1);
             }
-        } else if ("SPELL".equals(mode)) {
-            if (result) {
-                word.setSpellCorrect(word.getSpellCorrect() + 1);
-            } else {
-                word.setSpellWrong(word.getSpellWrong() + 1);
-            }
-        } else {
-            throw new IllegalArgumentException("无效的复习模式: " + mode + "，仅支持 RECOG 或 SPELL");
+            applyReviewProgress(word, result);
         }
 
-        // 更新总复习次数
-        word.setReviewTotal(word.getReviewTotal() + 1);
+        wordRepository.save(word);
+        info.put("recentSpellWrong", word.getRecentSpellWrong() == null ? 0 : word.getRecentSpellWrong());
 
-        // 更新最近复习时间
+        if (isSpelling) {
+            String reason = difficultWordService.evaluateAutoAddReason(word, spellingConfig);
+            if (reason != null && difficultWordService.addToDifficultGroup(word, reason)) {
+                info.put("addedToDifficult", true);
+                info.put("difficultGroupName", WordGroupService.DIFFICULT_GROUP_NAME);
+                info.put("difficultReason", reason);
+            }
+        }
+        return info;
+    }
+
+    /** 复习次数、最近复习时间、连续正确数、休眠标记 —— 认读与默写共用 */
+    private void applyReviewProgress(Word word, boolean result) {
+        word.setReviewTotal(word.getReviewTotal() + 1);
         word.setLastReviewDate(LocalDateTime.now());
 
-        // 更新连续正确数
         if (result) {
             word.setConsecutiveCorrect(word.getConsecutiveCorrect() + 1);
         } else {
@@ -193,12 +236,6 @@ public class ReviewService {
         }
 
         // 连续正确 >= 5 则标记休眠
-        if (word.getConsecutiveCorrect() >= 5) {
-            word.setIsDormant(true);
-        } else {
-            word.setIsDormant(false);
-        }
-
-        wordRepository.save(word);
+        word.setIsDormant(word.getConsecutiveCorrect() >= 5);
     }
 }

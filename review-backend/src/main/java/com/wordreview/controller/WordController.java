@@ -51,6 +51,8 @@ public class WordController {
         SORT_FIELD_WHITELIST.put("phonetic", "phonetic");
         SORT_FIELD_WHITELIST.put("meaning", "meaning");
         SORT_FIELD_WHITELIST.put("reviewTotal", "reviewTotal");
+        // 最近 N 次拼写错误次数（N 见「易错词配置」），词库管理「近N次拼错」列
+        SORT_FIELD_WHITELIST.put("recentSpellWrong", "recentSpellWrong");
     }
 
     /**
@@ -166,6 +168,7 @@ public class WordController {
         item.setSpellWrong(w.getSpellWrong());
         item.setIsDormant(w.getIsDormant());
         item.setRecogOnly(w.getRecogOnly());
+        item.setRecentSpellWrong(w.getRecentSpellWrong() == null ? 0 : w.getRecentSpellWrong());
         return item;
     }
 

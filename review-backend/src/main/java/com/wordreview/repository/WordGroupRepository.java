@@ -17,4 +17,7 @@ public interface WordGroupRepository extends JpaRepository<WordGroup, Long> {
     List<WordGroup> findByParentId(Long parentId);
 
     boolean existsByParentId(Long parentId);
+
+    /** 启动时给老数据补齐新加的 isDifficult 列（历史行是 NULL） */
+    List<WordGroup> findByIsDifficultIsNull();
 }

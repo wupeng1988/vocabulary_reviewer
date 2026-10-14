@@ -43,6 +43,15 @@ public interface WordRepository extends JpaRepository<Word, Long> {
     @Query("SELECT w FROM Word w WHERE (w.recogWrong + w.spellWrong) > 0 ORDER BY (w.recogWrong + w.spellWrong) * 1.0 / (w.reviewTotal + 1) DESC")
     List<Word> findTopErrorProne(Pageable pageable);
 
+    /** 启动时补齐新加列的 NULL 值（历史数据升级） */
+    List<Word> findBySpellRecentHistoryIsNull();
+
+    /** 启动时补齐新加列的 NULL 值（历史数据升级） */
+    List<Word> findByRecentSpellWrongIsNull();
+
+    /** 启动时补齐新加列的 NULL 值（历史数据升级） */
+    List<Word> findByConsecutiveSpellWrongIsNull();
+
     // ==================== 按词组筛选 ====================
 
     /** 按词组（含子孙词组）分页查询全部单词 */

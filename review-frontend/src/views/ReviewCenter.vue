@@ -140,8 +140,8 @@
               <div style="font-size: 18px; color: #909399; margin-top: 4px">{{ currentWord.exampleMeaning }}</div>
             </div>
 
-            <!-- 仅认读标记 -->
-            <div style="margin-bottom: 10px">
+            <!-- 仅认读标记 + 手动加入易错词组 -->
+            <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 12px">
               <el-switch
                 v-model="currentWord.recogOnly"
                 active-text="仅认读"
@@ -149,6 +149,19 @@
                 size="small"
                 @change="toggleRecogOnly(currentWord)"
               />
+              <el-button
+                v-if="!currentWord.inDifficultGroup"
+                size="small"
+                plain
+                type="warning"
+                :loading="addingDifficult"
+                @click="addToDifficult"
+              >
+                ➕ 加入{{ difficultConfig.groupName }}
+              </el-button>
+              <el-tag v-else type="warning" effect="plain" size="small">
+                ✅ 已加入{{ difficultConfig.groupName }}
+              </el-tag>
             </div>
 
             <div style="margin-top: 20px">
@@ -205,8 +218,8 @@
               <div style="font-size: 18px; color: #909399">{{ currentWord.exampleMeaning }}</div>
             </div>
 
-            <!-- 仅认读标记 -->
-            <div style="margin-bottom: 10px">
+            <!-- 仅认读标记 + 手动加入易错词组 -->
+            <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 12px">
               <el-switch
                 v-model="currentWord.recogOnly"
                 active-text="仅认读"
@@ -214,6 +227,19 @@
                 size="small"
                 @change="toggleRecogOnly(currentWord)"
               />
+              <el-button
+                v-if="!currentWord.inDifficultGroup"
+                size="small"
+                plain
+                type="warning"
+                :loading="addingDifficult"
+                @click="addToDifficult"
+              >
+                ➕ 加入{{ difficultConfig.groupName }}
+              </el-button>
+              <el-tag v-else type="warning" effect="plain" size="small">
+                ✅ 已加入{{ difficultConfig.groupName }}
+              </el-tag>
             </div>
 
             <div style="margin-top: 30px">
@@ -270,8 +296,8 @@
               <div style="font-size: 16px; color: #909399; margin-top: 12px">请根据发音拼写单词</div>
             </div>
 
-            <!-- 仅认读标记 -->
-            <div style="margin-bottom: 10px">
+            <!-- 仅认读标记 + 手动加入易错词组 -->
+            <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 12px">
               <el-switch
                 v-model="currentWord.recogOnly"
                 active-text="仅认读"
@@ -279,6 +305,19 @@
                 size="small"
                 @change="toggleRecogOnly(currentWord)"
               />
+              <el-button
+                v-if="!currentWord.inDifficultGroup"
+                size="small"
+                plain
+                type="warning"
+                :loading="addingDifficult"
+                @click="addToDifficult"
+              >
+                ➕ 加入{{ difficultConfig.groupName }}
+              </el-button>
+              <el-tag v-else type="warning" effect="plain" size="small">
+                ✅ 已加入{{ difficultConfig.groupName }}
+              </el-tag>
             </div>
 
             <div style="margin-top: 30px">
@@ -304,10 +343,14 @@
                   ✅ 正确！
                 </el-tag>
                 <div v-if="dictationFeedback === 'wrong'">
-                  <el-tag type="danger" size="large" style="font-size: 16px; margin-bottom: 10px">
-                    ❌ 错误，请重新输入
-                  </el-tag>
-                  <div style="margin-top: 12px; padding: 16px; background: #f5f7fa; border-radius: 8px; text-align: left; display: inline-block; min-width: 300px">
+                  <!-- 提示语独占一行：外层卡片是 text-align:center，标签和详情都用 inline-block 会挤到同一行 -->
+                  <div>
+                    <el-tag type="danger" size="large" style="font-size: 16px">
+                      ❌ 错误，请重新输入
+                    </el-tag>
+                  </div>
+                  <!-- 详情块居中并加宽（原 min-width:300px 太窄，例句长了会被截） -->
+                  <div style="margin: 12px auto 0; padding: 16px 20px; background: #f5f7fa; border-radius: 8px; text-align: left; width: 480px; max-width: 100%">
                     <div style="font-size: 22px; font-weight: bold; margin-bottom: 6px; color: #E6A23C">{{ currentWord.word }}</div>
                     <div style="font-size: 16px; color: #909399; margin-bottom: 8px">{{ currentWord.phonetic || '' }}</div>
                     <div style="font-size: 18px; margin-bottom: 8px">{{ currentWord.meaning }}</div>
@@ -869,6 +912,74 @@ const startReview = async (mode, phases = [], wordIds = [], groupSizeParam = 0) 
   loading.value = false
 }
 
+// ==================== 易错词组 ====================
+
+/** 易错词阈值与内置词组名，页面加载时拉一次，只影响提示文案 */
+const difficultConfig = ref({ windowSize: 30, consecutiveWrongLimit: 3, recentWrongLimit: 5, groupName: '易错词组' })
+const addingDifficult = ref(false)
+
+const loadDifficultConfig = async () => {
+  try {
+    const res = await api.get('/difficult/config')
+    difficultConfig.value = {
+      windowSize: res.windowSize ?? 30,
+      consecutiveWrongLimit: res.consecutiveWrongLimit ?? 3,
+      recentWrongLimit: res.recentWrongLimit ?? 5,
+      groupName: res.groupName || '易错词组'
+    }
+  } catch {
+    // 拿不到就用默认文案，不影响复习流程
+  }
+}
+
+/**
+ * 拼写类阶段（拼写练习 / 默写 / 听音默写）上报一次结果。
+ * 后端会维护「最近 N 次拼写错误次数」，并在达到阈值时把单词自动加进易错词组，
+ * 这里把 addedToDifficult 转成用户看得见的提示。
+ */
+const reportSpellingResult = async (mode, isCorrect) => {
+  try {
+    const res = await api.post('/review/record', {
+      wordId: currentWord.value.id,
+      mode,
+      result: isCorrect
+    })
+    if (res?.addedToDifficult) {
+      // 状态跟着置上，卡片上的「加入」按钮立刻变成「已加入」标签
+      currentWord.value.inDifficultGroup = true
+      ElMessage.warning({
+        message: `「${currentWord.value.word}」${res.difficultReason}，已自动加入${res.difficultGroupName || difficultConfig.value.groupName}`,
+        duration: 6000,
+        showClose: true
+      })
+    }
+    return res
+  } catch (e) {
+    console.error('记录拼写结果失败', e)
+    return null
+  }
+}
+
+/** 手动把当前单词加入内置易错词组 */
+const addToDifficult = async () => {
+  const word = currentWord.value
+  if (addingDifficult.value || !word?.id) return
+  addingDifficult.value = true
+  try {
+    const res = await api.post(`/difficult/words/${word.id}/add`)
+    if (res.added) word.inDifficultGroup = true
+    ElMessage[res.added ? 'success' : 'info']({
+      message: res.message,
+      duration: 4000,
+      showClose: true
+    })
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '加入易错词组失败')
+  } finally {
+    addingDifficult.value = false
+  }
+}
+
 // ==================== 认读阶段 ====================
 
 const recogAnswer = async (known) => {
@@ -989,6 +1100,11 @@ const checkPractice = () => {
   const correct = normalizeWord(currentWord.value.word.trim())
   const isCorrect = input === correct
 
+  // 拼写练习只上报拼写错误追踪（PRACTICE），不动复习次数等调度统计。
+  // 不 await：先同步给出反馈，上报异步走；reportSpellingResult 内部已吞掉异常，
+  // 也避免 await 打开一个「回车按两次提交两次」的窗口。
+  reportSpellingResult('PRACTICE', isCorrect)
+
   if (isCorrect) {
     practiceFeedback.value = 'correct'
     practiceShowWrong.value = false
@@ -1085,7 +1201,7 @@ const onSpellEnter = (e) => {
   checkSpelling()
 }
 
-const checkSpelling = async () => {
+const checkSpelling = () => {
   // 防重入：正确后等待自动跳转期间，忽略后续回车
   if (spellFeedback.value === 'correct') return
   if (!spellInput.value.trim()) {
@@ -1097,16 +1213,9 @@ const checkSpelling = async () => {
   const correct = normalizeWord(currentWord.value.word.trim())
   const isCorrect = input === correct
 
-  // 上报后端
-  try {
-    await api.post('/review/record', {
-      wordId: currentWord.value.id,
-      mode: 'SPELL',
-      result: isCorrect
-    })
-  } catch (e) {
-    console.error('记录默写结果失败', e)
-  }
+  // 上报后端（SPELL = 默写 / 听音默写，同时维护拼写错误追踪与易错词组）。
+  // 同 checkPractice，不 await，先同步给反馈
+  reportSpellingResult('SPELL', isCorrect)
 
   if (isCorrect) {
     spellFeedback.value = 'correct'
@@ -1249,7 +1358,7 @@ const onDictationEnter = (e) => {
   checkDictation()
 }
 
-const checkDictation = async () => {
+const checkDictation = () => {
   // 防重入：正确后等待自动跳转期间，忽略后续回车
   if (dictationFeedback.value === 'correct') return
   if (!dictationInput.value.trim()) {
@@ -1261,16 +1370,9 @@ const checkDictation = async () => {
   const correct = normalizeWord(currentWord.value.word.trim())
   const isCorrect = input === correct
 
-  // 上报后端
-  try {
-    await api.post('/review/record', {
-      wordId: currentWord.value.id,
-      mode: 'SPELL',
-      result: isCorrect
-    })
-  } catch (e) {
-    console.error('记录听音默写结果失败', e)
-  }
+  // 上报后端（SPELL = 默写 / 听音默写，同时维护拼写错误追踪与易错词组）。
+  // 同 checkPractice，不 await，先同步给反馈
+  reportSpellingResult('SPELL', isCorrect)
 
   if (isCorrect) {
     dictationFeedback.value = 'correct'
@@ -1364,6 +1466,7 @@ const resetReview = () => {
 
 onMounted(() => {
   loadConfig()
+  loadDifficultConfig()
   document.addEventListener('keydown', handleKeydown)
 
   // 检查是否从词库管理跳转过来，带有指定单词ID和阶段

@@ -62,6 +62,30 @@ public class Word {
     @Column(nullable = false)
     private Boolean recogOnly = false;      // 是否仅认读（不参与默写）
 
+    // ========== 拼写错误追踪（拼写练习 / 默写 / 听音默写 合并统计） ==========
+
+    /**
+     * 最近若干次拼写的滑动窗口历史。
+     * 字符串下标 0 为最早一次、末尾为最新一次：'1'=拼错，'0'=拼对。
+     * 每次拼写提交后按当前配置的窗口长度截断头部，因此长度恒 ≤ 窗口大小。
+     * 历史数据升级后该列为 NULL，启动时由 DifficultWordService 统一补空串。
+     */
+    @Column(length = 200)
+    private String spellRecentHistory = "";
+
+    /**
+     * 上面这段历史里拼错的次数，与 spellRecentHistory 始终保持同步。
+     * 单独冗余一列是为了能直接按「最近 N 次拼写错误次数」排序和做阈值判断，
+     * 否则要在 SQL 里统计字符串中 '1' 的个数，JPA 表达不了。
+     * 历史数据升级后该列为 NULL，启动时统一补 0。
+     */
+    @Column
+    private Integer recentSpellWrong = 0;
+
+    /** 连续拼写错误次数，拼对一次即清零；用于「连续错误 N 次」自动进易错词组 */
+    @Column
+    private Integer consecutiveSpellWrong = 0;
+
     /**
      * 仅供排序使用：生词的小写形式，由数据库在查询时计算，不落库、不参与持久化。
      * H2 默认 COLLATION=OFF，按 Java String.compareTo 排序区分大小写，

@@ -73,6 +73,7 @@ public class DataExportImportService {
             groupMap.put("name", g.getName());
             groupMap.put("sortOrder", g.getSortOrder());
             groupMap.put("isDefault", g.getIsDefault());
+            groupMap.put("isDifficult", g.getIsDifficult());
             groupMap.put("parentCode", g.getParentId() == null ? null : codeById.get(g.getParentId()));
             groupList.add(groupMap);
         }
@@ -105,6 +106,9 @@ public class DataExportImportService {
             wordMap.put("consecutiveCorrect", w.getConsecutiveCorrect());
             wordMap.put("isDormant", w.getIsDormant());
             wordMap.put("recogOnly", w.getRecogOnly());
+            wordMap.put("spellRecentHistory", w.getSpellRecentHistory());
+            wordMap.put("recentSpellWrong", w.getRecentSpellWrong());
+            wordMap.put("consecutiveSpellWrong", w.getConsecutiveSpellWrong());
             List<String> codes = codesByWord.get(w.getId());
             wordMap.put("groups", codes != null ? codes : Collections.emptyList());
             wordList.add(wordMap);
@@ -184,6 +188,9 @@ public class DataExportImportService {
                 if (Boolean.TRUE.equals(groupMap.get("isDefault"))) {
                     group.setIsDefault(true);
                 }
+                if (Boolean.TRUE.equals(groupMap.get("isDifficult"))) {
+                    group.setIsDifficult(true);
+                }
                 // 排序字段（老备份无此字段时保持原值，新词组落为 0）
                 Integer sortOrder = toInteger(groupMap.get("sortOrder"));
                 if (sortOrder != null) {
@@ -213,6 +220,7 @@ public class DataExportImportService {
             }
         }
         wordGroupService.ensureDefaultGroup();
+        wordGroupService.ensureDifficultGroup();
         Long defaultGroupId = wordGroupService.getDefaultGroupId();
 
         int wordCount = 0;
@@ -261,6 +269,15 @@ public class DataExportImportService {
                 if (wordMap.get("consecutiveCorrect") != null) word.setConsecutiveCorrect(((Number) wordMap.get("consecutiveCorrect")).intValue());
                 if (wordMap.get("isDormant") != null) word.setIsDormant((Boolean) wordMap.get("isDormant"));
                 if (wordMap.get("recogOnly") != null) word.setRecogOnly((Boolean) wordMap.get("recogOnly"));
+
+                // 拼写错误追踪（最近 N 次历史 + 错误次数 + 连续错误次数）
+                // 老备份没有这些字段时保持新建行的默认值 0 / 空串
+                Object historyObj = wordMap.get("spellRecentHistory");
+                if (historyObj != null) word.setSpellRecentHistory(historyObj.toString());
+                Integer recentWrong = toInteger(wordMap.get("recentSpellWrong"));
+                if (recentWrong != null) word.setRecentSpellWrong(recentWrong);
+                Integer consecutiveWrong = toInteger(wordMap.get("consecutiveSpellWrong"));
+                if (consecutiveWrong != null) word.setConsecutiveSpellWrong(consecutiveWrong);
 
                 Object lastReviewDateObj = wordMap.get("lastReviewDate");
                 if (lastReviewDateObj instanceof String) {
