@@ -154,9 +154,26 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
   UTF-8 的中文三字节会被按 GBK 错切行，表现为 **`REM` 整行丢失、后面的 `-----` 被当成命令、
   中文全变乱码**（`没有找到` → `娌℃湁鎵惧埌`）；LF 换行还会让多行 `if (...)` 块解析错乱。
   做法是：**仓库里保持 UTF-8 + LF 方便编辑**，`release.sh` 组装发布目录时用 python3 转成
-  `encoding='gbk', newline='
-\r\n'` 再放进包，并把 `chcp 65001` 改成 `chcp 936`。
+  `encoding='gbk', newline='\r\n'` 再放进包，并把 `chcp 65001` 改成 `chcp 936`。
   转码前会校验 GBK 可编码性——**emoji（如 ⚠️）和部分符号 GBK 编不了**，会直接失败退出
+  另外：`.bat` 永远由 cmd.exe 执行（在 PowerShell 里敲 `.\start.bat` 也会被交给 cmd），
+  但 `chcp` 改的是**整个控制台窗口**的代码页而非进程的，所以在已开着的会话里跑会泄漏到外层——
+  `start.bat` 进门先 `chcp` 存下原代码页到 `OLDCHCP`，8 个退出路径统一 `call :RESTORE_CHCP` 恢复。
+  PowerShell 里还必须写 `.\start.bat`（当前目录不在 PATH）；ExecutionPolicy 只管 `.ps1`，管不着它
+- **`start.bat` 里不能用 `for /f %%i in ('powershell ... Start-Process -PassThru ...')` 捕获 PID**（Windows 真机踩过）：
+  cmd 的 `for /f` 会给这条命令接一根管道，PowerShell 会把这根管道连同它继承到的其它可继承句柄
+  原样传给 java（Windows PowerShell 5.1 基于 .NET Framework，`CreateProcess` 是
+  `bInheritHandles=true` 且不限制句柄列表），于是 java 一直攥着管道写端不放、永不退出，
+  `for /f` 就永远等不到 EOF。**表现是卡在启动横幅的「端口」那行不动，进程号 / 访问地址 /
+  浏览器一个都不出现**。正确做法：让 PowerShell 把 PID 写进 `app.pid`（`[IO.File]::WriteAllText`），
+  cmd 再 `set /p` 读——不经过管道就没有这个问题。`stop.bat` 靠的正是这个文件
+- **就绪探测别用 `Invoke-WebRequest`**：每轮都要冷启一个 PowerShell（约 1~2 秒），且会读系统代理设置，
+  挂着代理的机器上对 localhost 也可能绕路或超时。`start.bat` 现在用
+  `New-Object Net.Sockets.TcpClient` 直连探端口，快且不吃代理；`start.sh` 沿用 `curl`
+- **`start.bat` 每轮还会查两个日志有没有致命错误**（`APPLICATION FAILED TO START` / `The file is locked` /
+  `already in use` / `Unrecognized option`），有就立刻收工不等满超时。
+  注意 Spring Boot 的启动失败横幅走的是 **stdout**（`app-out.log`），JVM 和 H2 的报错走 stderr（`app-err.log`），
+  **两个文件都得查**。日志尾部统一由 `:SHOW_LOG` / `:SHOW_HINTS` 两个子过程输出
 
 ## API 接口
 | 方法 | 路径 | 功能 |
