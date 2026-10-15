@@ -63,9 +63,9 @@ vocabulary-review/
 │       ├── components/Layout.vue      # 左菜单+右内容布局
 │       ├── utils/group.js             # 词组树加载/树选项转换/默认词组查找
 │       └── views/
-│           ├── WordManage.vue         # 词库管理（词组筛选+表格+编辑+删除+调整词组+批量生成音频+复查选框+复习按钮）；
+│           ├── WordManage.vue         # 词库管理（词组筛选+表格+编辑+删除+调整词组+批量生成音频+清理无用音频+复查选框+复习按钮）；
 │           │                          # 也承载「易错词库」页：路由传 difficultMode=true，固定查易错词组、
-│           │                          # 隐藏词组筛选与新增/AI解析/生成音频/调整词组/批量删除，换成「移出易错词组」
+│           │                          # 隐藏词组筛选与新增/AI解析/生成音频/清理音频/调整词组/批量删除，换成「移出易错词组」
 │           ├── GroupManage.vue        # 词组管理（树形表格，增删改查，子词组）
 │           ├── ReviewCenter.vue       # 复习中心（认读+拼写练习+默写+听音默写四阶段）
 │           ├── DataManage.vue         # 数据管理（JSON导入导出+Excel导入需选词组+按Sheet导出）
@@ -200,6 +200,7 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 | GET | `/api/audio/{word}/status` | 查询音频生成状态（ready/generating） |
 | POST | `/api/audio/batch` | 触发批量音频生成（运行中则不重复） |
 | GET | `/api/audio/batch/status` | 查询批量生成状态（running/idle） |
+| POST | `/api/audio/cleanup` | 清理无用音频，删掉音频目录里已无对应单词的 mp3（?dryRun=true 只扫描统计不真删） |
 | GET | `/api/groups/tree` | 词组树（含每个词组的直接单词数 wordCount） |
 | GET | `/api/groups/default-id` | 内置默认词组ID |
 | POST | `/api/groups` | 新增词组 {code?, name, parentId?, sortOrder?}（code 留空自动生成 Gxxx） |
@@ -244,7 +245,7 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
   可服务端排序（`sortField=recentSpellWrong`，已进白名单），表头 tooltip 里写当前窗口次数
 - **易错词库页面** (`/difficult-words`，词库管理正下方菜单): 复用 `WordManage.vue`，路由传 `props: { difficultMode: true }`，
   做的减法是——固定传 `groupId=<易错词组ID>`（含其子词组）、隐藏「按词组筛选」下拉、
-  表格隐藏 词组/复习次数/状态/仅认读 四列、隐藏 批量AI解析添加/新增/生成音频/调整词组/批量删除 五个按钮，
+  表格隐藏 词组/复习次数/状态/仅认读 四列、隐藏 批量AI解析添加/新增/生成音频/清理音频/调整词组/批量删除 六个按钮，
   换成「➖ 移出易错词组」（勾选后可用，走既有的 `POST /api/words/batch-delete` `mode=group` + `groupId`，
   单词保留；若它是唯一归属则自动落到默认词组）。搜索、排序、编辑、删除、自定义复习按钮照常可用。
   **必须先 await 拿到 difficultGroupId 再查列表**，否则 groupId 为空会查成整个词库。
@@ -332,6 +333,14 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **异步生成**: 首次访问时异步生成，前端轮询等待就绪
 - **批量生成**: 应用启动、Excel 导入、数据导入后自动扫描缺失音频并依次生成，间隔 1s + 随机(1-2)s
 - **防重复**: 批量任务运行中不会重复启动
+- **清理无用音频**: 词库删掉单词后音频不会自动跟着删，日积月累会攒下一批永远读不到的 mp3。
+  词库管理「生成音频」右侧的「🧹 清理音频」按钮走 `POST /api/audio/cleanup`：
+  先 `?dryRun=true` 扫一遍拿到数量/体积，前端弹确认框列 8 个文件名样例，确认后再真删。
+  「无用」的判定口径**刻意与 `getAudioPath` 完全一致**（`word.trim().toLowerCase() + ".mp3"`），
+  即「永远不会被 `Files.exists` 命中、程序再也不会去读」的文件——所以 U+2011 连字符存的单词
+  和它的音频两边都带 U+2011，照样算在用，不会被误删。
+  只扫音频目录第一层、只删 `.mp3`（`.DS_Store` 之类不动）；`generatingMap` 里正在生成的
+  单词跳过，不跟写线程抢文件句柄。删掉的文件等对应单词下次复习到时按需重新生成
 - **自动播放**: 认读、拼写练习和听音默写阶段切换单词时自动播放，默写阶段不自动播放（拼写提交后播放一次）
 - **手动播放**: 四个阶段卡片均有 🔊 播放按钮可手动触发
 - **走代理**: 合成请求用 `ProxyConfigService.getHttpClient()`（进程内**共用一个** HttpClient，

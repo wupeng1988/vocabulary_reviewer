@@ -104,6 +104,17 @@ public class AudioController {
     }
 
     /**
+     * 清理无用音频：删掉音频目录里已经找不到对应单词的 mp3（典型场景是单词从词库删了、
+     * 音频还留着）。词库里还在的词一个都不会动。
+     * ?dryRun=true 只扫描统计不真删，供前端弹确认框时先看一眼。
+     */
+    @PostMapping("/cleanup")
+    public ResponseEntity<Map<String, Object>> cleanupAudio(
+            @RequestParam(defaultValue = "false") boolean dryRun) {
+        return ResponseEntity.ok(audioGenerationTaskService.cleanupUnusedAudio(dryRun));
+    }
+
+    /**
      * 重新生成指定单词的音频（删除旧文件后重新生成）。
      */
     @PostMapping("/regenerate")

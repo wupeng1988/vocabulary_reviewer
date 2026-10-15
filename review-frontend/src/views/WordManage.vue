@@ -64,6 +64,20 @@
             >
               {{ batchRunning ? '音频生成中...' : selectedWords.length > 0 ? '🔊 重新生成音频' : '🔊 生成音频' }}
             </el-button>
+            <el-tooltip
+              content="删掉音频目录里已经找不到对应单词的 mp3（比如词库里已删除的词）。词库中的词一个都不会动，被删的音频下次复习到时会自动重新生成"
+              placement="bottom"
+            >
+              <el-button
+                size="small"
+                type="info"
+                plain
+                :loading="cleaningAudio"
+                @click="cleanupAudio"
+              >
+                {{ cleaningAudio ? '清理中...' : '🧹 清理音频' }}
+              </el-button>
+            </el-tooltip>
             <el-button
               size="small"
               type="warning"
@@ -517,6 +531,7 @@ const hideExampleMeaning = ref(false)
 const hideWord = ref(false)
 const batchRunning = ref(false)
 const batchChecking = ref(false)
+const cleaningAudio = ref(false)
 
 // ==================== 词组筛选 ====================
 const groupTree = ref([])
@@ -750,6 +765,67 @@ const triggerBatchGeneration = async () => {
     ElMessage.error('启动批量生成失败')
   }
   batchChecking.value = false
+}
+
+/** 字节数转人话 */
+const formatSize = (bytes) => {
+  const n = Number(bytes) || 0
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+/**
+ * 清理无用音频：先 dry-run 扫一遍拿到数量，让用户看清楚再删。
+ * 「无用」= 音频文件对应的单词已经不在词库里了，程序再也不会去读这个文件。
+ */
+const cleanupAudio = async () => {
+  cleaningAudio.value = true
+  let preview = null
+  try {
+    preview = await api.post('/audio/cleanup', null, { params: { dryRun: true } })
+  } catch {
+    cleaningAudio.value = false
+    ElMessage.error('扫描无用音频失败')
+    return
+  }
+
+  const orphan = preview?.orphanFiles ?? 0
+  if (orphan === 0) {
+    cleaningAudio.value = false
+    ElMessage.success(`音频目录很干净，${preview?.totalFiles ?? 0} 个 mp3 全部对应词库里的单词`)
+    return
+  }
+
+  const samples = (preview?.samples || []).slice(0, 8).map(f => `  ${f}`).join('\n')
+  const more = orphan > 8 ? `\n  ……还有 ${orphan - 8} 个` : ''
+  try {
+    await ElMessageBox.confirm(
+      `音频目录共 ${preview?.totalFiles ?? 0} 个 mp3，其中 ${orphan} 个已经找不到对应的单词` +
+        `（词库用到 ${preview?.keptFiles ?? 0} 个），删除后可释放约 ${formatSize(preview?.freedBytes)}。\n\n` +
+        `将删除的文件示例：\n${samples}${more}\n\n` +
+        `词库里的词一个都不会动；万一删错了，对应单词下次复习到时会自动重新生成。`,
+      '清理无用音频',
+      { type: 'warning', confirmButtonText: `确认删除 ${orphan} 个`, cancelButtonText: '取消' }
+    )
+  } catch {
+    cleaningAudio.value = false
+    return   // 用户取消
+  }
+
+  try {
+    const res = await api.post('/audio/cleanup')
+    if (res?.success === false) {
+      ElMessage.error(res.message || '清理失败')
+    } else if (res?.failedFiles > 0) {
+      ElMessage.warning(res.message || `删除失败 ${res.failedFiles} 个`)
+    } else {
+      ElMessage.success(`${res?.message || '清理完成'}，释放 ${formatSize(res?.freedBytes)}`)
+    }
+  } catch {
+    ElMessage.error('清理无用音频失败')
+  }
+  cleaningAudio.value = false
 }
 
 // 音频按钮：有选中词则重新生成，否则批量生成缺失音频
