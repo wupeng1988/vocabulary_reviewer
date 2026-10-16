@@ -234,6 +234,10 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **删除单词二选一**: 词库管理删除按钮弹二选一——「从本词组移除」只解除该词组归属、单词保留；若该单词仅属该词组则自动落到默认词组；「彻底删除」清除单词及其全部词组关联和复习统计（有二次确认）
 - **词组删除限制**: 默认词组不可删除；有子词组的词组需先删除子词组；删除成环防护（上级不能是自身子孙）
 - **Excel 导入需选词组**: 数据管理导入 Excel 前必须选择目标词组；已存在的单词只新增关联、不重复创建
+  「导入到词组」标签带红色星号，且**不能靠 `el-upload` 的 `:disabled` 挡没选词组的情况**——
+  挡住了点击/拖拽毫无反应，用户根本不知道为什么传不上去；正确做法是放行到 `before-upload`
+  里弹 `ElMessage.error` 红字。四个按钮（导出全部数据/导入备份数据/导入Excel/导出Excel）
+  都有 loading，且互相 `:disabled` 交叉禁用，避免同时跑导入又导出
 - **Excel 按 Sheet 导出**: 每个词组一个 Sheet（A-E 列同导入格式），未归类单词导出到「未分组」Sheet，空词组不生成 Sheet
 - **Excel 导入模板**: `/api/words/export-template` 出一个只有标题行的空表，数据管理页导入区下方有「下载导入模板」链接。
   标题行与导出共用 `ExcelExportService.HEADERS`，列顺序永远一致；导入按列下标读且跳过第 1 行，所以空模板原样导入返回 0 个词不报错
@@ -264,6 +268,10 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **卡片上的易错词状态**: `/api/review/generate` 和 `/generate-by-ids` 的每条都带 `inDifficultGroup`
   （`ReviewController.toDisplayList` 用一次 `filterWordIdsInGroup` 批量回填，不逐词查库）。
   前端据此在 `!inDifficultGroup` 时显示按钮、否则换成「✅ 已加入易错词组」标签；
+  卡片上的「加入易错词组 / 已加入易错词组」文案**写死常量 `DIFFICULT_GROUP_LABEL`，不跟词组实际名字走**——
+  内置易错词组允许改名（比如改成「雅思词汇真经」），跟名字走按钮文案会变；而且以前是
+  页面加载时异步拉 `/api/difficult/config` 取名字，刷新时会先显示默认名再跳一次，来回闪。
+  现在复习页不再拉这个配置（`loadDifficultConfig` 已删）
   自动加入或手动加入成功后就地把 `currentWord.inDifficultGroup` 置 true，不用等下一轮生成列表
 - **易错词配置页面**: 左侧「⚙️ 系统设置」菜单组下的「🎯 易错词配置」（`/difficult`）。
   三个数字：统计窗口次数（默认 30，上限 100）、连续错误次数（默认 3）、窗口内累计错误次数（默认 5），

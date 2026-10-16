@@ -7,7 +7,9 @@
       </template>
       <!-- 先选择导入目标词组 -->
       <div style="margin-bottom: 16px; display: flex; align-items: center; gap: 12px">
-        <span style="color: #606266">导入到词组：</span>
+        <span style="color: #606266">
+          导入到词组：<span style="color: #F56C6C; font-weight: bold">*</span>
+        </span>
         <el-tree-select
           v-model="importGroupId"
           :data="groupOptions"
@@ -16,9 +18,12 @@
           default-expand-all
           node-key="value"
           :props="{ value: 'value', label: 'label', children: 'children' }"
-          placeholder="请先选择要导入的词组"
+          placeholder="必选：请先选择要导入的词组"
           style="width: 320px"
         />
+        <span v-if="!importGroupId" style="color: #F56C6C; font-size: 12px">
+          必须先选好目标词组才能导入
+        </span>
         <span style="color: #909399; font-size: 12px">
           已存在的单词只新增与该词组的关联，不会被重复创建
         </span>
@@ -29,15 +34,19 @@
         name="file"
         :data="uploadData"
         :limit="1"
+        :on-start="handleUploadStart"
         :on-success="handleUploadSuccess"
         :on-error="handleUploadError"
         :before-upload="beforeUpload"
-        :disabled="!importGroupId"
+        :disabled="importingExcel || importingJson || excelExportLoading || exportLoading"
         accept=".xls,.xlsx"
         drag
       >
-        <el-icon style="font-size: 40px; color: #409EFF"><upload-filled /></el-icon>
-        <div style="margin-top: 10px">将 Excel 文件拖到此处，或 <em>点击上传</em></div>
+        <el-icon v-if="importingExcel" class="is-loading" style="font-size: 40px; color: #409EFF"><loading /></el-icon>
+        <el-icon v-else style="font-size: 40px; color: #409EFF"><upload-filled /></el-icon>
+        <div style="margin-top: 10px">
+          {{ importingExcel ? '正在导入 Excel，请稍候…' : '将 Excel 文件拖到此处，或 点击上传' }}
+        </div>
         <template #tip>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
             仅支持 .xls / .xlsx 格式，A-E 列依次对应：生词、音标、含义、例句、例句释义
@@ -51,7 +60,12 @@
         </template>
       </el-upload>
       <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid #ebeef5">
-        <el-button type="primary" @click="doExportExcel" :loading="excelExportLoading">
+        <el-button
+          type="primary"
+          @click="doExportExcel"
+          :loading="excelExportLoading"
+          :disabled="importingExcel || importingJson || exportLoading"
+        >
           <el-icon style="margin-right: 4px"><download /></el-icon>导出为 Excel
         </el-button>
         <span style="color: #909399; font-size: 12px; margin-left: 8px">
@@ -67,7 +81,12 @@
       </template>
       <el-row :gutter="40">
         <el-col :span="12">
-          <el-button type="success" @click="exportData" :loading="exportLoading">
+          <el-button
+            type="success"
+            @click="exportData"
+            :loading="exportLoading"
+            :disabled="importingExcel || importingJson || excelExportLoading"
+          >
             <el-icon style="margin-right: 4px"><download /></el-icon>导出全部数据
           </el-button>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
@@ -83,11 +102,17 @@
             :on-success="handleJsonImportSuccess"
             :on-error="handleJsonImportError"
             :before-upload="beforeJsonUpload"
+            :disabled="importingExcel || excelExportLoading || exportLoading"
             accept=".json"
             :show-file-list="false"
           >
-            <el-button type="warning">
-              <el-icon style="margin-right: 4px"><upload /></el-icon>导入备份数据
+            <el-button
+              type="warning"
+              :loading="importingJson"
+              :disabled="importingExcel || excelExportLoading || exportLoading"
+            >
+              <el-icon v-if="!importingJson" style="margin-right: 4px"><upload /></el-icon>
+              {{ importingJson ? '正在导入…' : '导入备份数据' }}
             </el-button>
           </el-upload>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
@@ -102,7 +127,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { UploadFilled, Download, Upload } from '@element-plus/icons-vue'
+import { UploadFilled, Download, Upload, Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import api, { exportData as apiExport, exportExcel as apiExportExcel } from '../api'
 import { loadGroupTree, toTreeOptions } from '../utils/group'
@@ -124,6 +149,8 @@ onMounted(async () => {
 // ========== Excel 导入 ==========
 const uploadRef = ref(null)
 const excelExportLoading = ref(false)
+const importingExcel = ref(false)
+const importingJson = ref(false)
 
 const beforeUpload = (file) => {
   const name = file.name
@@ -131,11 +158,17 @@ const beforeUpload = (file) => {
     ElMessage.error('仅支持 .xls 和 .xlsx 格式')
     return false
   }
+  // 目标词组是必填项。这里不能靠 el-upload 的 disabled 挡——挡住了点击毫无反应，
+  // 用户根本不知道为什么传不上去，所以放行到这里弹红字提醒。
   if (!importGroupId.value) {
-    ElMessage.error('请先选择导入的词组')
+    ElMessage.error('请先选择「导入到词组」，目标词组是必选项')
     return false
   }
   return true
+}
+
+const handleUploadStart = () => {
+  importingExcel.value = true
 }
 
 const handleUploadSuccess = (response) => {
@@ -144,11 +177,13 @@ const handleUploadSuccess = (response) => {
   } else {
     ElMessage.error(response.message)
   }
+  importingExcel.value = false
   uploadRef.value?.clearFiles()
 }
 
 const handleUploadError = () => {
   ElMessage.error('上传失败，请检查文件格式')
+  importingExcel.value = false
   uploadRef.value?.clearFiles()
 }
 
@@ -216,6 +251,7 @@ const beforeJsonUpload = (file) => {
     ElMessage.error('仅支持 .json 格式的备份文件')
     return false
   }
+  importingJson.value = true
   return true
 }
 
@@ -225,11 +261,13 @@ const handleJsonImportSuccess = (response) => {
   } else {
     ElMessage.error(response.message)
   }
+  importingJson.value = false
   jsonUploadRef.value?.clearFiles()
 }
 
 const handleJsonImportError = () => {
   ElMessage.error('导入失败，请检查文件格式')
+  importingJson.value = false
   jsonUploadRef.value?.clearFiles()
 }
 </script>

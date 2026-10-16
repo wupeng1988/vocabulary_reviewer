@@ -157,10 +157,10 @@
                 :loading="addingDifficult"
                 @click="addToDifficult"
               >
-                ➕ 加入{{ difficultConfig.groupName }}
+                ➕ 加入{{ DIFFICULT_GROUP_LABEL }}
               </el-button>
               <el-tag v-else type="warning" effect="plain" size="small">
-                ✅ 已加入{{ difficultConfig.groupName }}
+                ✅ 已加入{{ DIFFICULT_GROUP_LABEL }}
               </el-tag>
             </div>
 
@@ -235,10 +235,10 @@
                 :loading="addingDifficult"
                 @click="addToDifficult"
               >
-                ➕ 加入{{ difficultConfig.groupName }}
+                ➕ 加入{{ DIFFICULT_GROUP_LABEL }}
               </el-button>
               <el-tag v-else type="warning" effect="plain" size="small">
-                ✅ 已加入{{ difficultConfig.groupName }}
+                ✅ 已加入{{ DIFFICULT_GROUP_LABEL }}
               </el-tag>
             </div>
 
@@ -313,10 +313,10 @@
                 :loading="addingDifficult"
                 @click="addToDifficult"
               >
-                ➕ 加入{{ difficultConfig.groupName }}
+                ➕ 加入{{ DIFFICULT_GROUP_LABEL }}
               </el-button>
               <el-tag v-else type="warning" effect="plain" size="small">
-                ✅ 已加入{{ difficultConfig.groupName }}
+                ✅ 已加入{{ DIFFICULT_GROUP_LABEL }}
               </el-tag>
             </div>
 
@@ -914,23 +914,16 @@ const startReview = async (mode, phases = [], wordIds = [], groupSizeParam = 0) 
 
 // ==================== 易错词组 ====================
 
-/** 易错词阈值与内置词组名，页面加载时拉一次，只影响提示文案 */
-const difficultConfig = ref({ windowSize: 30, consecutiveWrongLimit: 3, recentWrongLimit: 5, groupName: '易错词组' })
-const addingDifficult = ref(false)
+/**
+ * 卡片上按钮/标签里「易错词组」的固定叫法。
+ * 不跟词组的实际名字走：内置易错词组是允许改名的（比如改成「雅思词汇真经」），
+ * 跟名字走的话按钮文案会跟着变；而且之前是页面加载时去 /api/difficult/config
+ * 异步拉名字，刷新时还会先显示默认的「易错词组」、拉完再跳成新名字，来回闪一下。
+ * 所以直接写死，不再拉配置。
+ */
+const DIFFICULT_GROUP_LABEL = '易错词组'
 
-const loadDifficultConfig = async () => {
-  try {
-    const res = await api.get('/difficult/config')
-    difficultConfig.value = {
-      windowSize: res.windowSize ?? 30,
-      consecutiveWrongLimit: res.consecutiveWrongLimit ?? 3,
-      recentWrongLimit: res.recentWrongLimit ?? 5,
-      groupName: res.groupName || '易错词组'
-    }
-  } catch {
-    // 拿不到就用默认文案，不影响复习流程
-  }
-}
+const addingDifficult = ref(false)
 
 /**
  * 拼写类阶段（拼写练习 / 默写 / 听音默写）上报一次结果。
@@ -948,7 +941,7 @@ const reportSpellingResult = async (mode, isCorrect) => {
       // 状态跟着置上，卡片上的「加入」按钮立刻变成「已加入」标签
       currentWord.value.inDifficultGroup = true
       ElMessage.warning({
-        message: `「${currentWord.value.word}」${res.difficultReason}，已自动加入${res.difficultGroupName || difficultConfig.value.groupName}`,
+        message: `「${currentWord.value.word}」${res.difficultReason}，已自动加入${DIFFICULT_GROUP_LABEL}`,
         duration: 6000,
         showClose: true
       })
@@ -1466,7 +1459,6 @@ const resetReview = () => {
 
 onMounted(() => {
   loadConfig()
-  loadDifficultConfig()
   document.addEventListener('keydown', handleKeydown)
 
   // 检查是否从词库管理跳转过来，带有指定单词ID和阶段
