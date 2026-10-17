@@ -168,7 +168,8 @@
         @selection-change="handleSelectionChange"
         @sort-change="handleSortChange"
       >
-        <el-table-column type="selection" width="50" align="center" />
+        <!-- fixed="left"：横向滚动时复选框列钉在最左侧，否则会随内容滚走 -->
+        <el-table-column type="selection" width="50" align="center" fixed="left" />
         <el-table-column prop="id" label="ID" width="70" align="center" sortable="custom">
           <template #default="{ row }">
             <span class="id-link" @click="openViewDialog(row)">{{ row.id }}</span>
@@ -265,16 +266,30 @@
       </el-table>
 
       <!-- 分页 -->
-      <div style="margin-top: 20px; display: flex; justify-content: center">
+      <div style="margin-top: 20px; display: flex; justify-content: center; align-items: center; gap: 12px">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :total="totalElements"
           :page-sizes="[20, 50, 100, 200, 500, 1000]"
           layout="total, sizes, prev, pager, next, jumper"
-          @size-change="loadWords"
+          @size-change="onPageSizeChange"
           @current-change="loadWords"
         />
+        <!-- el-pagination 的 sizes 只有下拉、手输不了，这里配一个输入框 -->
+        <span style="color: #606266; font-size: 14px; white-space: nowrap">每页</span>
+        <el-input-number
+          v-model="pageSizeInput"
+          :min="1"
+          :max="1000"
+          :step="10"
+          size="small"
+          controls-position="right"
+          style="width: 110px"
+          placeholder="1-1000"
+          @change="applyPageSizeInput"
+        />
+        <span style="color: #606266; font-size: 14px; white-space: nowrap">条</span>
       </div>
     </el-card>
 
@@ -525,6 +540,26 @@ const keyword = ref('')
 const currentPage = ref(1)
 const pageSize = ref(50)
 const totalElements = ref(0)
+// 手动输入的每页条数：与下拉双向同步，但允许下拉里没有的任意值（1~1000）
+const pageSizeInput = ref(50)
+const PAGE_SIZE_MIN = 1
+const PAGE_SIZE_MAX = 1000
+
+/** 手动输入每页条数：clamp 到 1~1000 后跳回第 1 页重查 */
+const applyPageSizeInput = (val) => {
+  let n = Math.trunc(Number(val))
+  if (!Number.isFinite(n) || val === null || val === undefined || val === '') {
+    // 输入被清空时回落到当前生效值，不去改分页
+    pageSizeInput.value = pageSize.value
+    return
+  }
+  n = Math.min(PAGE_SIZE_MAX, Math.max(PAGE_SIZE_MIN, n))
+  pageSizeInput.value = n
+  if (n === pageSize.value) return
+  pageSize.value = n
+  currentPage.value = 1
+  loadWords()
+}
 const hideMeaning = ref(false)
 const hideExampleMeaning = ref(false)
 // 隐藏生词、音标、例句（配合「复习」使用，避免直接看到答案）
@@ -851,6 +886,12 @@ const regenerateSelectedAudio = async () => {
     ElMessage.error('重新生成音频失败')
   }
   batchChecking.value = false
+}
+
+/** 下拉切换每页条数：同步手动输入框的显示值 */
+const onPageSizeChange = (val) => {
+  pageSizeInput.value = val
+  loadWords()
 }
 
 const loadWords = async () => {
