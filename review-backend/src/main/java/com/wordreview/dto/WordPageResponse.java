@@ -29,6 +29,9 @@ public class WordPageResponse {
         private Boolean recogOnly;
         /** 最近 N 次拼写（拼写练习/默写/听音默写）里拼错的次数，N 见易错词配置 */
         private Integer recentSpellWrong;
+
+        /** 同义标签：为 null/空表示未归组 */
+        private String synonym;
         private List<GroupNodeDTO> groups;   // 所属词组
     }
 }

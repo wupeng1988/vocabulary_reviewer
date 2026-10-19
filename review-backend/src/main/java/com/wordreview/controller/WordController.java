@@ -14,6 +14,7 @@ import com.wordreview.service.WordGroupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -53,6 +54,8 @@ public class WordController {
         SORT_FIELD_WHITELIST.put("reviewTotal", "reviewTotal");
         // 最近 N 次拼写错误次数（N 见「易错词配置」），词库管理「近N次拼错」列
         SORT_FIELD_WHITELIST.put("recentSpellWrong", "recentSpellWrong");
+        // 同义标签：按它排序可把近义词排到一起，空值由 withSynonymSort 统一排最后
+        SORT_FIELD_WHITELIST.put("synonym", "synonym");
     }
 
     /**
@@ -103,7 +106,11 @@ public class WordController {
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "id") String sortField,
             @RequestParam(defaultValue = "asc") String sortOrder,
-            @RequestParam(required = false) Long groupId) {
+            @RequestParam(required = false) Long groupId,
+            // 「只看已归组的词」：true 时只返回 synonym 非空的词
+            @RequestParam(required = false) Boolean hasSynonym,
+            // 精确按某个标签筛（可为空串 = 不限标签，但仍受 hasSynonym 约束）
+            @RequestParam(required = false) String synonym) {
 
         // 前端页码从1开始，JPA从0开始。
         // sortField 来自请求参数，必须走白名单：既挡住非法属性名，也把 UI 字段名映射到实体字段
@@ -113,15 +120,46 @@ public class WordController {
             throw new IllegalArgumentException("不支持的排序字段: " + sortField);
         }
         Sort.Direction direction = "asc".equalsIgnoreCase(sortOrder) ? Sort.Direction.ASC : Sort.Direction.DESC;
-        PageRequest pageRequest = PageRequest.of(page - 1, size, Sort.by(direction, entityField));
+        boolean sortBySynonym = "synonym".equals(sortField);
+        // 同义标签排序的空值必须排最后，而 Sort.Order.nullsLast() 在 Hibernate 里
+        // 不会被翻译进 SQL，所以走仓储里写死 ORDER BY 的专用查询，只带分页信息
+        Pageable pageRequest = sortBySynonym
+                ? wordRepository.paginationOnly(PageRequest.of(page - 1, size))
+                : PageRequest.of(page - 1, size, Sort.by(direction, entityField));
 
         String trimmedKeyword = (keyword != null && !keyword.trim().isEmpty()) ? keyword.trim() : null;
         List<Long> groupIds = groupId != null ? wordGroupService.getGroupAndDescendantIds(groupId) : null;
+
+        // 同义标签筛选：空串视为「不限标签」，避免前端传空参数时误筛成空结果
+        boolean filterByHasSynonym = Boolean.TRUE.equals(hasSynonym);
+        String synonymFilter = (synonym != null && !synonym.trim().isEmpty()) ? synonym.trim() : null;
+        if (synonymFilter != null) filterByHasSynonym = true;
 
         Page<Word> wordPage;
         if (groupIds != null && groupIds.isEmpty()) {
             // 筛选的词组无任何单词
             wordPage = Page.empty(pageRequest);
+        } else if (synonymFilter != null && trimmedKeyword != null) {
+            wordPage = wordRepository.findBySynonymAndKeyword(synonymFilter, trimmedKeyword, pageRequest);
+        } else if (synonymFilter != null) {
+            wordPage = wordRepository.findBySynonym(synonymFilter, pageRequest);
+        } else if (filterByHasSynonym && trimmedKeyword != null) {
+            wordPage = sortBySynonym
+                    ? (direction == Sort.Direction.ASC
+                        ? wordRepository.findSynonymNotBlankSortedAscAndKeyword(trimmedKeyword, pageRequest)
+                        : wordRepository.findSynonymNotBlankSortedDescAndKeyword(trimmedKeyword, pageRequest))
+                    : wordRepository.findBySynonymNotBlankAndKeyword(trimmedKeyword, pageRequest);
+        } else if (filterByHasSynonym) {
+            wordPage = sortBySynonym
+                    ? (direction == Sort.Direction.ASC
+                        ? wordRepository.findAllSortedBySynonymAsc(pageRequest)
+                        : wordRepository.findAllSortedBySynonymDesc(pageRequest))
+                    : wordRepository.findBySynonymNotBlank(pageRequest);
+        } else if (sortBySynonym) {
+            // 排序字段是同义标签但没开筛选：全库按标签排，空值（未归组）统一沉底
+            wordPage = direction == Sort.Direction.ASC
+                    ? wordRepository.findAllSortedBySynonymAsc(pageRequest)
+                    : wordRepository.findAllSortedBySynonymDesc(pageRequest);
         } else if (groupIds != null && trimmedKeyword != null) {
             wordPage = wordRepository.findByGroupIdsAndKeyword(groupIds, trimmedKeyword, pageRequest);
         } else if (groupIds != null) {
@@ -169,6 +207,7 @@ public class WordController {
         item.setIsDormant(w.getIsDormant());
         item.setRecogOnly(w.getRecogOnly());
         item.setRecentSpellWrong(w.getRecentSpellWrong() == null ? 0 : w.getRecentSpellWrong());
+        item.setSynonym(w.getSynonym());
         return item;
     }
 
@@ -470,6 +509,68 @@ public class WordController {
     }
 
     /** 批量给选中的单词调整词组（mode: replace / add / remove） */
+    // ==================== 同义标签 ====================
+
+    /**
+     * 批量给选中的单词打同义标签（或清除）。
+     * 请求体：{wordIds:[...], synonym:"lawyer" }
+     * synonym 传 null 或空串 = 清除标签（让词回到「未归组」）。
+     *
+     * 标签名会被 trim 并限长 100（与实体列长一致），超长直接 400 而不是截断——
+     * 截断出来的 "lawye" 是个查不出来的标签，比报错更难排查。
+     */
+    @PostMapping("/batch-synonym")
+    public ResponseEntity<Map<String, Object>> batchUpdateSynonym(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            List<Long> wordIds = new ArrayList<>();
+            if (body.get("wordIds") instanceof List) {
+                for (Object v : (List<?>) body.get("wordIds")) {
+                    if (v != null) wordIds.add(((Number) v).longValue());
+                }
+            }
+            if (wordIds.isEmpty()) {
+                result.put("success", false);
+                result.put("message", "未选中任何单词");
+                return ResponseEntity.badRequest().body(result);
+            }
+
+            String raw = (String) body.get("synonym");
+            String synonym = (raw != null && !raw.trim().isEmpty()) ? raw.trim() : null;
+            if (synonym != null && synonym.length() > 100) {
+                result.put("success", false);
+                result.put("message", "标签名过长（最多 100 字符）");
+                return ResponseEntity.badRequest().body(result);
+            }
+
+            List<Word> words = wordRepository.findAllById(wordIds);
+            for (Word w : words) {
+                w.setSynonym(synonym);
+            }
+            wordRepository.saveAll(words);
+
+            result.put("success", true);
+            result.put("count", words.size());
+            result.put("synonym", synonym);
+            result.put("message", synonym == null
+                    ? "已清除 " + words.size() + " 个单词的同义标签"
+                    : "已把 " + words.size() + " 个单词归到「" + synonym + "」");
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /** 已用过的全部同义标签（去重、字母序），供前端下拉框用 */
+    @GetMapping("/synonyms")
+    public ResponseEntity<Map<String, Object>> listSynonyms() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("synonyms", wordRepository.findDistinctSynonyms());
+        return ResponseEntity.ok(result);
+    }
+
     @PostMapping("/batch-groups")
     public ResponseEntity<Map<String, Object>> batchUpdateGroups(@RequestBody Map<String, Object> body) {
         Map<String, Object> result = new HashMap<>();

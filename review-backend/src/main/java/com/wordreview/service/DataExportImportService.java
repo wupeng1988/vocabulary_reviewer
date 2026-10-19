@@ -108,6 +108,8 @@ public class DataExportImportService {
             wordMap.put("recogOnly", w.getRecogOnly());
             wordMap.put("spellRecentHistory", w.getSpellRecentHistory());
             wordMap.put("recentSpellWrong", w.getRecentSpellWrong());
+            // 同义标签：纯分组信息、无隐私，参与备份（换机器后分组不丢）
+            wordMap.put("synonym", w.getSynonym());
             wordMap.put("consecutiveSpellWrong", w.getConsecutiveSpellWrong());
             List<String> codes = codesByWord.get(w.getId());
             wordMap.put("groups", codes != null ? codes : Collections.emptyList());
@@ -258,6 +260,8 @@ public class DataExportImportService {
 
                 word.setPhonetic(wordMap.get("phonetic") == null ? null : wordMap.get("phonetic").toString());
                 word.setMeaning(wordMap.get("meaning") == null ? null : wordMap.get("meaning").toString());
+                // 老备份没有 synonym 字段，wordMap.get 返回 null，正好表示「未归组」
+                word.setSynonym(wordMap.get("synonym") == null ? null : wordMap.get("synonym").toString());
                 word.setExampleSentence(wordMap.get("exampleSentence") == null ? null : wordMap.get("exampleSentence").toString());
                 word.setExampleMeaning(wordMap.get("exampleMeaning") == null ? null : wordMap.get("exampleMeaning").toString());
 

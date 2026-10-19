@@ -4,7 +4,7 @@
     <el-card class="sticky-search">
       <!-- 第一行：搜索 + 词组筛选 -->
       <el-row :gutter="16" align="middle">
-        <el-col :span="difficultMode ? 12 : 5">
+        <el-col :span="difficultMode ? 9 : 4">
           <el-input
             v-model="keyword"
             placeholder="搜索生词或含义..."
@@ -17,7 +17,7 @@
             </template>
           </el-input>
         </el-col>
-        <el-col v-if="!difficultMode" :span="7">
+        <el-col v-if="!difficultMode" :span="5">
           <el-tree-select
             v-model="filterGroupId"
             :data="groupOptions"
@@ -31,28 +31,41 @@
             @change="onFilterGroupChange"
           />
         </el-col>
-        <el-col :span="3">
+        <!-- 同义标签筛选：放在「搜索」按钮左边。勾上后只显示已归组的词，
+             下拉可进一步指定具体标签 -->
+        <el-col :span="8">
+          <el-checkbox
+            v-model="onlySynonymWords"
+            size="small"
+            style="margin-right: 10px"
+            @change="onSynonymFilterChange"
+          >
+            只看有同义标签的
+          </el-checkbox>
+          <el-select
+            v-model="filterSynonym"
+            placeholder="指定同义标签"
+            clearable
+            filterable
+            :disabled="!onlySynonymWords"
+            size="small"
+            style="width: 190px"
+            @change="onSynonymFilterChange"
+          >
+            <el-option v-for="s in synonymOptions" :key="s" :label="s" :value="s" />
+          </el-select>
+        </el-col>
+        <el-col :span="2">
           <el-button size="small" type="primary" @click="loadWords">搜索</el-button>
         </el-col>
-        <el-col :span="9" style="text-align: right">
-          <span style="margin-right: 10px">
-            <el-button :type="hideMeaning ? 'warning' : 'default'" size="small" @click="hideMeaning = !hideMeaning">
-              {{ hideMeaning ? '显示含义' : '隐藏含义' }}
-            </el-button>
-            <el-button :type="hideExampleMeaning ? 'warning' : 'default'" size="small" @click="hideExampleMeaning = !hideExampleMeaning">
-              {{ hideExampleMeaning ? '显示例句释义' : '隐藏例句释义' }}
-            </el-button>
-            <el-button :type="hideWord ? 'warning' : 'default'" size="small" @click="hideWord = !hideWord">
-              {{ hideWord ? '显示单词' : '隐藏单词' }}
-            </el-button>
-          </span>
+        <el-col :span="5" style="text-align: right">
           <span style="color: #909399">共 {{ totalElements }} 个单词</span>
         </el-col>
       </el-row>
 
-      <!-- 第二行：操作按钮组 -->
-      <el-row :gutter="16" style="margin-top: 12px">
-        <el-col :span="24">
+      <!-- 第二行：左边是操作按钮组，右边是复习时隐藏答案用的三个开关 -->
+      <el-row :gutter="16" style="margin-top: 12px" align="middle">
+        <el-col :span="18">
           <template v-if="!difficultMode">
             <el-button size="small" type="primary" plain @click="openAiDialog">🤖 批量AI解析添加</el-button>
             <el-button size="small" type="success" @click="openAddDialog">➕ 新增</el-button>
@@ -86,6 +99,20 @@
             >
               🗂️ 调整词组
             </el-button>
+            <el-tooltip
+              content="把勾选的单词归到同一个同义标签下（如 attorney/barrister/solicitor 都标 lawyer）。之后按「同义标签」列排序，这些词就会排到一起"
+              placement="bottom"
+            >
+              <el-button
+                size="small"
+                type="warning"
+                plain
+                :disabled="selectedWords.length === 0"
+                @click="openSynonymDialog"
+              >
+                🏷 同义标签
+              </el-button>
+            </el-tooltip>
             <el-button
               size="small"
               type="danger"
@@ -113,6 +140,18 @@
             @click="openReviewDialog"
           >
             📖 复习 ({{ selectedWords.length }})
+          </el-button>
+        </el-col>
+        <!-- 右栏：隐藏答案的三个开关 -->
+        <el-col :span="6" style="text-align: right">
+          <el-button :type="hideMeaning ? 'warning' : 'default'" size="small" @click="hideMeaning = !hideMeaning">
+            {{ hideMeaning ? '显示含义' : '隐藏含义' }}
+          </el-button>
+          <el-button :type="hideExampleMeaning ? 'warning' : 'default'" size="small" @click="hideExampleMeaning = !hideExampleMeaning">
+            {{ hideExampleMeaning ? '显示例句释义' : '隐藏例句释义' }}
+          </el-button>
+          <el-button :type="hideWord ? 'warning' : 'default'" size="small" @click="hideWord = !hideWord">
+            {{ hideWord ? '显示单词' : '隐藏单词' }}
           </el-button>
         </el-col>
       </el-row>
@@ -241,11 +280,12 @@
         <el-table-column v-if="!difficultMode" prop="reviewTotal" label="复习次数" width="110" align="center" sortable="custom">
           <template #default="{ row }">{{ row.reviewTotal }}</template>
         </el-table-column>
-        <el-table-column v-if="!difficultMode" label="状态" width="80" align="center">
+        <!-- 同义标签列：替代原「状态」列。标签相同 = 意思相近，
+             按本列排序即可把它们排到一起（勾选复习时自然连着过） -->
+        <el-table-column prop="synonym" label="同义标签" width="120" align="center" sortable="custom">
           <template #default="{ row }">
-            <el-tag :type="row.isDormant ? 'info' : 'success'" size="small">
-              {{ row.isDormant ? '休眠' : '活跃' }}
-            </el-tag>
+            <el-tag v-if="row.synonym" type="warning" size="small">{{ row.synonym }}</el-tag>
+            <span v-else style="color: #c0c4cc">—</span>
           </template>
         </el-table-column>
         <el-table-column v-if="!difficultMode" label="仅认读" width="80" align="center" fixed="right">
@@ -294,6 +334,46 @@
     </el-card>
 
     <!-- 编辑弹窗 -->
+    <!-- 同义标签弹窗 -->
+    <el-dialog v-model="showSynonymDialog" title="🏷 同义标签" width="480px" :close-on-click-modal="false">
+      <el-form label-width="90px">
+        <el-form-item label="已选单词">
+          <span style="color: #606266">
+            {{ selectedWords.length }} 个：
+            <span style="color: #909399; font-size: 12px">
+              {{ selectedWords.slice(0, 8).map(w => w.word).join('、') }}{{ selectedWords.length > 8 ? ' 等' : '' }}
+            </span>
+          </span>
+        </el-form-item>
+        <el-form-item label="标签名">
+          <el-select
+            v-model="synonymInput"
+            placeholder="输入或选择一个标签，如 lawyer"
+            filterable
+            allow-create
+            default-first-option
+            :reserve-keyword="false"
+            style="width: 100%"
+          >
+            <el-option v-for="s in synonymOptions" :key="s" :label="s" :value="s" />
+          </el-select>
+          <div style="color: #909399; font-size: 12px; margin-top: 4px">
+            标签相同的词就是一组近义词。想控制组与组之间的先后，在标签前加数字前缀即可
+            （如 <code>1-lawyer</code> 排在 <code>2-colour</code> 前面）。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showSynonymDialog = false">取消</el-button>
+        <el-button type="warning" plain :disabled="!synonymInput" :loading="savingSynonym" @click="applySynonym">
+          归组
+        </el-button>
+        <el-button type="info" plain :loading="savingSynonym" @click="clearSynonym">
+          清除标签
+        </el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="showEditDialog" title="编辑单词" width="580px" :close-on-click-modal="false">
       <el-form :model="editForm" label-width="90px">
         <el-form-item label="生词" required>
@@ -571,6 +651,13 @@ const cleaningAudio = ref(false)
 // ==================== 词组筛选 ====================
 const groupTree = ref([])
 const filterGroupId = ref(null)
+// 同义标签筛选
+const onlySynonymWords = ref(false)
+const filterSynonym = ref(null)
+const synonymOptions = ref([])
+const showSynonymDialog = ref(false)
+const synonymInput = ref('')
+const savingSynonym = ref(false)
 const groupOptions = computed(() => toTreeOptions(groupTree.value))
 const defaultGroupId = ref(null)
 
@@ -894,6 +981,66 @@ const onPageSizeChange = (val) => {
   loadWords()
 }
 
+// ==================== 同义标签 ====================
+
+/** 拉取已用过的全部标签，喂给筛选下拉和弹窗里的可选输入 */
+const loadSynonymOptions = async () => {
+  try {
+    const res = await api.get('/words/synonyms')
+    synonymOptions.value = res.synonyms || []
+  } catch {
+    // 拉不到就不给选项，不影响手动输入
+  }
+}
+
+/** 筛选条件变化：回到第 1 页重查 */
+const onSynonymFilterChange = () => {
+  currentPage.value = 1
+  loadWords()
+}
+
+/** 勾选未变时打开弹窗，预填「所有选中词的共同标签」（有则带上，方便追加同组） */
+const openSynonymDialog = () => {
+  const tags = new Set(selectedWords.value.map(w => w.synonym).filter(Boolean))
+  synonymInput.value = tags.size === 1 ? [...tags][0] : ''
+  showSynonymDialog.value = true
+}
+
+const doSetSynonym = async (value) => {
+  const ids = selectedWords.value.map(w => w.id)
+  if (ids.length === 0) return
+  savingSynonym.value = true
+  try {
+    const res = await api.post('/words/batch-synonym', { wordIds: ids, synonym: value })
+    if (res.success) {
+      ElMessage.success(res.message)
+      showSynonymDialog.value = false
+      clearSelection()
+      await loadSynonymOptions()
+      loadWords()
+    } else {
+      ElMessage.error(res.message || '设置失败')
+    }
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.message || '设置同义标签失败')
+  } finally {
+    savingSynonym.value = false
+  }
+}
+
+const applySynonym = () => {
+  const tag = (synonymInput.value || '').trim()
+  if (!tag) {
+    ElMessage.warning('请输入标签名')
+    return
+  }
+  doSetSynonym(tag)
+}
+
+const clearSynonym = () => {
+  doSetSynonym('')
+}
+
 const loadWords = async () => {
   try {
     const res = await api.get('/words/page', {
@@ -904,7 +1051,10 @@ const loadWords = async () => {
         sortField: sortField.value,
         sortOrder: sortOrder.value,
         // 易错词库模式固定查内置易错词组（含其子词组），忽略词组筛选下拉
-        groupId: props.difficultMode ? difficultGroupId.value : (filterGroupId.value || undefined)
+        groupId: props.difficultMode ? difficultGroupId.value : (filterGroupId.value || undefined),
+        // 同义标签筛选（易错词库页也照常可用）
+        hasSynonym: onlySynonymWords.value ? true : undefined,
+        synonym: filterSynonym.value || undefined
       }
     })
     words.value = res.content
@@ -1386,6 +1536,7 @@ onMounted(async () => {
   // 易错词库模式必须先拿到易错词组ID再查，否则 groupId 为空会查成整个词库
   await loadDifficultConfig()
   await loadGroups()
+  loadSynonymOptions()
   loadWords()
 })
 

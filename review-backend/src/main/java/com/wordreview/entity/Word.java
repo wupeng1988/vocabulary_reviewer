@@ -87,6 +87,19 @@ public class Word {
     private Integer consecutiveSpellWrong = 0;
 
     /**
+     * 同义标签：把意思相近的词归到同一个标签下（如 attorney/barrister/solicitor 都标 "lawyer"），
+     * 词库管理里按它排序就能把这些词排到一起，勾选复习时自然连着过。
+     *
+     * 约定：
+     * - 为 null / 空串表示「没归组」，不是脏数据；所以不能用 nullable = false
+     *   （Hibernate 增量 DDL 会生成 add column not null，H2 对已有数据直接失败，整条 DDL 回滚）
+     * - 按它排序时空值统一排最后（见 WordRepository 的 sortSynonymNullsLast），
+     *   所以想手动控制组间先后，在标签前加数字前缀即可，如 "1-lawyer"、"2-colour"
+     */
+    @Column(length = 100)
+    private String synonym;
+
+    /**
      * 仅供排序使用：生词的小写形式，由数据库在查询时计算，不落库、不参与持久化。
      * H2 默认 COLLATION=OFF，按 Java String.compareTo 排序区分大小写，
      * 会把 Apple 排在 apple 前面；词表按字母序看这种结果像 bug，

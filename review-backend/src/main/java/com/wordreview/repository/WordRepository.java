@@ -2,7 +2,9 @@ package com.wordreview.repository;
 
 import com.wordreview.entity.Word;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -62,4 +64,81 @@ public interface WordRepository extends JpaRepository<Word, Long> {
     @Query("SELECT w FROM Word w WHERE w.id IN (SELECT m.wordId FROM WordGroupMember m WHERE m.groupId IN :groupIds)"
             + " AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%)")
     Page<Word> findByGroupIdsAndKeyword(@Param("groupIds") List<Long> groupIds, @Param("kw") String keyword, Pageable pageable);
+
+    // ==================== 同义标签 ====================
+
+    /**
+     * 分页查询：只看「已归组」的词（synonym 非空）。
+     *
+     * H2/SQL 里空串 '' 和 NULL 都算「没归组」，所以两个都要排除——
+     * 只判 IS NOT NULL 会把空串的词也捞出来（历史上可能存进过 ''）。
+     */
+    @Query("SELECT w FROM Word w WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> ''")
+    Page<Word> findBySynonymNotBlank(Pageable pageable);
+
+    /** 分页查询：只看某个具体标签的词 */
+    @Query("SELECT w FROM Word w WHERE w.synonym = :synonym")
+    Page<Word> findBySynonym(@Param("synonym") String synonym, Pageable pageable);
+
+    /** 分页查询：按关键词（生词或含义）搜，且只限已归组的词 */
+    @Query("SELECT w FROM Word w WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> ''" +
+           " AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%)")
+    Page<Word> findBySynonymNotBlankAndKeyword(@Param("kw") String keyword, Pageable pageable);
+
+    /** 分页查询：按关键词搜某个具体标签内的词 */
+    @Query("SELECT w FROM Word w WHERE w.synonym = :synonym" +
+           " AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%)")
+    Page<Word> findBySynonymAndKeyword(@Param("synonym") String synonym,
+                                       @Param("kw") String keyword, Pageable pageable);
+
+    /** 已用过的全部标签（去重、非空、字母序），供前端下拉框用 */
+    @Query("SELECT DISTINCT w.synonym FROM Word w " +
+           "WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> '' ORDER BY w.synonym ASC")
+    List<String> findDistinctSynonyms();
+
+    /**
+     * 按同义标签分页（升序），空值排最后。
+     *
+     * 为什么空值要排最后：H2 默认 ORDER BY 把 NULL 当最小值排最前，
+     * 而「没归组」的词有 4000 多个占绝大多数——排最前的话真正归了组的
+     * 会被顶到第一页之后，等于白排。
+     *
+     * 为什么不用 Pageable/Sort 拼：实测 `new Sort.Order(...).nullsLast()` **不会**被
+     * 翻译进生成的 SQL（`order by synonym asc`，NULL 照样排最前），
+     * 所以直接在 JPQL 里写 NULLS LAST。同标签内按 id 升序，
+     * 组间顺序由标签字符串决定，想控制先后就在标签前加数字前缀。
+     */
+    @Query(value = "SELECT w FROM Word w ORDER BY w.synonym ASC NULLS LAST, w.id ASC",
+           countQuery = "SELECT COUNT(w) FROM Word w")
+    Page<Word> findAllSortedBySynonymAsc(Pageable pageable);
+
+    /** 同上但降序（空值同样排最后） */
+    @Query(value = "SELECT w FROM Word w ORDER BY w.synonym DESC NULLS LAST, w.id ASC",
+           countQuery = "SELECT COUNT(w) FROM Word w")
+    Page<Word> findAllSortedBySynonymDesc(Pageable pageable);
+
+    /** 已归组的词 + 按同义标签升序 + 关键词搜索 */
+    @Query(value = "SELECT w FROM Word w WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> '' "
+                   + "AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%) "
+                   + "ORDER BY w.synonym ASC NULLS LAST, w.id ASC",
+           countQuery = "SELECT COUNT(w) FROM Word w WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> '' "
+                        + "AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%)")
+    Page<Word> findSynonymNotBlankSortedAscAndKeyword(@Param("kw") String keyword, Pageable pageable);
+
+    /** 已归组的词 + 按同义标签降序 + 关键词搜索 */
+    @Query(value = "SELECT w FROM Word w WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> '' "
+                   + "AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%) "
+                   + "ORDER BY w.synonym DESC NULLS LAST, w.id ASC",
+           countQuery = "SELECT COUNT(w) FROM Word w WHERE w.synonym IS NOT NULL AND TRIM(w.synonym) <> '' "
+                        + "AND (w.word LIKE %:kw% OR w.meaning LIKE %:kw%)")
+    Page<Word> findSynonymNotBlankSortedDescAndKeyword(@Param("kw") String keyword, Pageable pageable);
+
+    /**
+     * 造一个「不带排序」的 Pageable，供上面几个 @Query 方法用。
+     * JPQL 里已经写了 ORDER BY，Pageable 再带 Sort 只会多拼一段冗余的 order by，
+     * 所以这里只保留分页信息。
+     */
+    default Pageable paginationOnly(Pageable pageable) {
+        return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
+    }
 }
