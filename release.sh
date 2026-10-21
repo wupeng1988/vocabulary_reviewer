@@ -198,6 +198,10 @@ done
 cp "$PACKAGING_DIR/README.txt" "$STAGE_DIR/"
 cp "$PACKAGING_DIR/README.md" "$STAGE_DIR/"
 cp "$PACKAGING_DIR/application.properties" "$STAGE_DIR/"
+# 许可证必须随包分发：jar 里含移植自 edge-tts（LGPL-3.0）的代码，
+# GPL-3.0 要求分发时附带许可证正文和第三方来源说明
+cp "$ROOT_DIR/LICENSE" "$STAGE_DIR/LICENSE"
+cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$STAGE_DIR/THIRD_PARTY_NOTICES.md"
 chmod +x "$STAGE_DIR/start.sh"
 
 # 发音缓存一并打包。不带的话对方首次运行要联网把几千个词的发音全生成一遍，

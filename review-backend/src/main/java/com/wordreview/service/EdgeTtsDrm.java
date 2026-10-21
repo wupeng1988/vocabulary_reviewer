@@ -3,6 +3,33 @@ package com.wordreview.service;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
+/*
+ * Copyright (C) 2025 Word Review Pro contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * ---------------------------------------------------------------------------
+ * 第三方来源：本文件的实现逐行移植自 edge-tts 项目的 src/edge_tts/drm.py
+ *   上游：https://github.com/rany2/edge-tts
+ *   上游许可证：GNU Lesser General Public License v3.0
+ *   Copyright (c) 2014-2023 Christopher Down / Copyright (c) 2025- rany
+ *
+ * 按 LGPL-3.0 §3，本移植代码随本项目整体以 GPL-3.0 发布。
+ * 详见仓库根目录的 THIRD_PARTY_NOTICES.md。
+ * ---------------------------------------------------------------------------
+ */
+
 /**
  * 微软 Edge TTS 的 Sec-MS-GEC v2 token 生成（对应 edge-tts 的 drm.py）。
  *

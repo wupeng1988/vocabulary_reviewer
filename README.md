@@ -422,4 +422,9 @@ Excel A~E 列严格映射：
 
 ## 📜 License
 
-MIT
+[GPL-3.0](LICENSE)
+
+> 本项目以 **GNU GPL v3** 发布。原因是 `EdgeTtsDrm.java` / `EdgeTtsService.java`
+> 移植自 [rany2/edge-tts](https://github.com/rany2/edge-tts)（LGPL-3.0），
+> 按 LGPL-3.0 §3 随本项目整体以 GPL-3.0 发布。
+> 详细来源与致谢见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -27,6 +27,37 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/*
+ * Copyright (C) 2025 Word Review Pro contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * ---------------------------------------------------------------------------
+ * 第三方来源：本文件的协议实现参考自 edge-tts 项目
+ *   上游：https://github.com/rany2/edge-tts
+ *   上游许可证：GNU Lesser General Public License v3.0
+ *   Copyright (c) 2014-2023 Christopher Down / Copyright (c) 2025- rany
+ *
+ * 涉及：communicate.py（SSML 构造、消息流程）、constants.py（协议常量）、
+ *      data_classes.py（语音名转换）、drm.py（MUID 生成）。
+ * 配套的 token 生成见 EdgeTtsDrm.java。
+ *
+ * 按 LGPL-3.0 §3，本文件随本项目整体以 GPL-3.0 发布。
+ * 详见仓库根目录的 THIRD_PARTY_NOTICES.md。
+ * ---------------------------------------------------------------------------
+ */
+
 /**
  * Edge TTS 服务：Java 原生实现微软 Edge 在线 TTS 的 WebSocket 协议。
  * 协议参考自 Python edge-tts 项目 (communicate.py / drm.py / constants.py)。

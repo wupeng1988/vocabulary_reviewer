@@ -395,6 +395,13 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
   （407 除外：说明代理需要账号密码认证，JDK 不支持，见上文限制）
 
 ## 开发注意事项
+- **许可证：全仓库 GPL-3.0**（`LICENSE`）。原因是 `EdgeTtsDrm.java` / `EdgeTtsService.java`
+  移植自 [rany2/edge-tts](https://github.com/rany2/edge-tts)，而上游是 **LGPL-3.0**
+  （上游只有 `srt_composer.py` 是 MIT，其余全是 LGPLv3）。
+  按 LGPL-3.0 §3，LGPL 作品可整体以 GPL-3.0 发布。
+  **不要把仓库改回 MIT** —— 那会违反 LGPL 的「修改后仍以 LGPL 发布」要求。
+  第三方来源清单见 `THIRD_PARTY_NOTICES.md`；`release.sh` 会把 LICENSE 和
+  THIRD_PARTY_NOTICES.md 一起拷进发布包（GPL 要求分发时附带许可证正文）
 - 前端仅适配 1920×1080 及以上分辨率，不做移动端
 - H2 数据文件在用户目录 ~/worddb.mv.db，重启不丢失
 - Excel A-E 列严格映射: 生词/音标/含义/例句/例句释义
