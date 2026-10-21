@@ -6,12 +6,17 @@
 
 ## ✨ 功能特性
 
-- 📥 **Excel 导入 / 导出** — 支持 `.xls` / `.xlsx`，Upsert 去重更新并保留复习统计；导出按词组分 Sheet
+- 📥 **Excel 导入 / 导出** — 支持 `.xls` / `.xlsx`，Upsert 去重更新并保留复习统计；导出按词组分 Sheet，
+  **导回时按 Sheet 名自动还原词组**
 - 🤖 **AI 批量导入** — 粘贴一列单词，DeepSeek / 通义千问自动还原原型并补齐音标、全部释义、雅思例句
 - 🧠 **智能调度算法** — 三级筛选（强制召回 → 综合评分 → 随机抽样），兼顾紧急度与饥饿度
 - 📖 **四阶段复习** — 认读 → 拼写练习 → 默写 → 听音默写，"认识"不等于"会写"
 - 🎯 **五种复习模式** — 完整复习 / 仅认读 / 仅拼写练习 / 仅默写 / 仅听音默写，词库页还可勾选单词自定义阶段组合
 - 🗂️ **词组树管理** — 父子层级词组、单词与词组多对多、按词组筛选（含子孙）、批量调整归属
+- 🏷️ **同义标签** — 给近义词打同一个标签（如 attorney / barrister / solicitor 都标 `lawyer`），
+  按标签排序即可把近义词排到一起，勾选后连着复习
+- 🎯 **易错词体系** — 拼写连续 / 累计错误自动进「易错词组」，阈值可配，易错词库独立成页
+- 🌐 **网络代理设置** — 内置免认证 HTTP 代理配置，保存即生效，Edge TTS 走不走代理自己定
 - 🔊 **内置发音** — Java 原生实现 Edge TTS（WebSocket 协议），生成后本地缓存，离线可播
 - 📊 **统计看板** — 词库概览、易错词 Top 5、长期未复习词等 ECharts 可视化
 - 💾 **零配置持久化** — H2 文件数据库 `~/worddb.mv.db`，重启不丢数据，无需安装 MySQL
@@ -88,17 +93,18 @@ ECharts 可视化展示词库总量、易错词排行、长期未复习词等数
 vocabulary-review/
 ├── review-backend/                        # Spring Boot 后端
 │   ├── pom.xml                            # 含 release profile：把前端产物打进 jar
-│   ├── audio/                             # TTS 音频缓存（约 4187 个 mp3 / 49MB，已入版本库）
+│   ├── audio/                             # TTS 音频缓存（约 4490 个 mp3 / 53MB，已入版本库）
 │   └── src/main/
 │       ├── resources/application.yml      # 数据源 / 默认端口 8080 / 音频目录
 │       └── java/com/wordreview/
 │           ├── WordReviewApplication.java     # 启动类
 │           ├── entity/                        # Word / ReviewConfig / WordGroup / WordGroupMember
-│           ├── repository/                    # 对应四个 Repository
-│           ├── service/                       # 调度、Excel 导入导出、JSON 备份、词组、Edge TTS、统计、AI 配置与解析
-│           ├── controller/                    # /api/words /review /stats /audio /groups
+│           │                                  #   + AiConfig / ProxyConfig / DifficultConfig（三个单例行）
+│           ├── repository/                    # 对应七个 Repository
+│           ├── service/                       # 调度、Excel 导入导出、JSON 备份、词组、Edge TTS、统计、
+│           │                                  #   易错词、AI 配置与解析、代理配置
+│           ├── controller/                    # /api/words /review /stats /audio /groups /difficult /ai /proxy
 │           ├── config/SpaFallbackConfig.java  # 发布包 SPA 路由回退（dev 环境自动跳过）
-│           ├── entity/AiConfig.java           # AI 配置单例行（独立于词库，不进备份）
 │           └── dto/                           # 请求 / 响应 DTO
 │
 ├── review-frontend/                       # Vue 3 前端
@@ -106,23 +112,27 @@ vocabulary-review/
 │   └── src/
 │       ├── main.js / App.vue / style.css
 │       ├── api/index.js                   # Axios 封装
-│       ├── router/index.js                # 路由: /words /groups /data /review /stats /ai
+│       ├── router/index.js                # 路由: /words /difficult-words /groups /data /review
+│       │                                  #        /stats /ai /proxy /difficult
 │       ├── utils/group.js                 # 词组树加载 / 树选项转换 / 默认词组查找
-│       ├── views/AiSettings.vue            # AI 设置页（/ai）
-│       ├── components/Layout.vue          # 左菜单 + 右内容
-│       └── views/                         # 词库 / 词组 / 数据 / 复习 / 统计 五个页面
+│       ├── components/Layout.vue          # 左菜单（可收起）+ 右内容
+│       └── views/                         # WordManage / GroupManage / DataManage / ReviewCenter
+│                                          #   / StatsDashboard / AiSettings / ProxySettings
+│                                          #   / DifficultSettings
 │
 ├── packaging/                             # 发布包内的启动脚本与说明文档
-│   ├── start.sh                           # macOS / Linux 启动（打包时另存为 Start.command）
-│   ├── start.bat                          # Windows 启动
+│   ├── start.sh / stop.sh                 # macOS / Linux 启停（start.sh 另存为 Start.command）
+│   ├── start.bat / stop.bat               # Windows 启停（打包时转 GBK + CRLF）
 │   ├── application.properties             # 用户可改端口：server.port=8080
 │   ├── README.txt                         # 一页纸速查（记事本可直接打开）
 │   └── README.md                          # 小白上手指南 + 常见问题全解
 │
+├── tools/make-seed.py                     # 构建期工具：把 JSON 备份洗成不含复习记录的种子词库
 ├── release.sh                             # 一键打包 → release/WordReviewPro-<版本>-<系统>.zip
 ├── dev.sh / dev.cmd / dev.ps1             # 开发用一键启停（前后端分离）
-├── data/                                  # JSON 数据备份
+├── data/                                  # JSON 数据备份（种子词库的数据源之一）
 ├── imgs/                                  # README 截图
+├── LICENSE / THIRD_PARTY_NOTICES.md       # GPL-3.0 许可证与第三方来源说明
 └── 本地智能单词复习系统.md                 # 需求文档
 ```
 
@@ -173,6 +183,18 @@ npm run dev
 
 访问 http://localhost:5173
 
+### 首次使用：导入词库
+
+数据库是**空的**（数据存在你本机的 `~/worddb.mv.db`，不随代码走），首次启动后：
+
+1. 左侧菜单 **「数据管理」**
+2. 在「数据备份」那一栏点 **「导入备份数据」**
+3. 选 `data/单词复习数据备份.json`（开发环境）或发布包里的 `seed-words.json`（发给用户时）
+4. 词组结构和复习统计会一起还原
+
+> 也可以用 Excel 导入：先在「导入到词组」选好目标词组，再上传 `.xlsx`。
+> 多 Sheet 的文件会**按 Sheet 名自动还原词组**。
+
 ---
 
 ## 📦 打包分发（给没有开发环境的朋友）
@@ -191,9 +213,13 @@ release/WordReviewPro-1.0.0-<系统>-<架构>.zip
     ├── WordReviewPro.jar     # 后端 + 前端页面，单文件
     ├── jre/                  # jlink 裁剪的 Java 运行时（对方无需装 Java）
     ├── application.properties # 用户可改的配置：server.port=（默认 8080）
+    ├── seed-words.json       # 种子词库：含词组结构、不含复习记录，对方导入即有词库
+    ├── audio/                # 发音缓存（--no-audio 可去掉）
     ├── Start.command         # macOS 双击启动
-    ├── start.sh              # macOS / Linux 终端启动
-    ├── start.bat             # Windows 双击启动
+    ├── start.sh / stop.sh    # macOS / Linux 启停
+    ├── start.bat / stop.bat  # Windows 启停
+    ├── LICENSE               # GPL-3.0 许可证正文（分发必须附带）
+    ├── THIRD_PARTY_NOTICES.md # 第三方来源与致谢
     ├── README.txt            # 一页纸速查（记事本可直接打开）
     └── README.md             # 小白上手指南 + 常见问题全解
 ```
@@ -223,9 +249,12 @@ release/WordReviewPro-1.0.0-<系统>-<架构>.zip
 
 | 命令 | 说明 |
 |:---|:---|
-| `./release.sh` | 完整包（含内置 JRE），约 96MB |
-| `./release.sh --no-jre` | 只有 jar + 启动脚本，约 60MB，但对方必须自装 Java 11+ |
+| `./release.sh` | 完整包（含内置 JRE + 种子词库 + 发音缓存） |
+| `./release.sh --no-jre` | 不带内置 JRE，对方必须自装 Java 11+（省约 57MB） |
+| `./release.sh --no-audio` | 不带发音缓存（省约 53MB），对方首次运行要联网生成发音 |
+| `./release.sh --no-seed` | 不带种子词库，对方得自己导 Excel / JSON 才有词库 |
 | `./release.sh --no-zip` | 只生成目录不压缩，便于本地测试 |
+| `./release.sh --platform windows-x86_64` | **在 macOS / Linux 上交叉打 Windows 包**（见下） |
 
 ### 打包原理
 
@@ -240,14 +269,20 @@ release/WordReviewPro-1.0.0-<系统>-<架构>.zip
 
 ### 跨平台说明
 
-JRE 只能在同架构的系统上生成，**在谁的系统上打包就只能给谁用**：
+`--platform` 支持的目标平台：
 
-| 打包机 | 产物 |
+| 目标平台 | 说明 |
 |:---|:---|
-| Apple Silicon Mac | `macos-arm64` |
-| Intel Mac | `macos-x86_64` |
-| Windows | `windows-x86_64` |
-| Linux | `linux-x86_64` / `linux-arm64` |
+| `macos-arm64` / `macos-x86_64` | 在对应架构的 Mac 上直接打 |
+| `linux-x86_64` / `linux-aarch64` | 在对应架构的 Linux 上直接打 |
+| `windows-x86_64` | **可在 macOS / Linux 上交叉打** |
+
+> **交叉打 Windows 包的原理**：jar 和前端产物是平台无关的，**只有 `jre/` 需要换**。
+> 脚本会下载一份 Windows 版 JDK 到 `release/.jdk-cache/`（仅首次，约 180MB，之后复用），
+> 再用**本机 jlink** 的 `--module-path` 指向它的 jmods。jlink 只把 jmods 里的类和
+> 平台原生库打包、**不校验宿主平台**，所以 macOS 的 jlink + Windows 的 jmods
+> 能直接产出 `bin/java.exe`（PE32+ x86-64）。
+> **不能反过来用 WSL 打 Windows 包** —— WSL 里的 jlink 产出的是 Linux 运行时。
 
 Windows 上没有 `release.sh`，可手动执行三步：
 
@@ -277,8 +312,28 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | PUT | `/api/words/{id}/groups` | 覆盖式设置所属词组 `{groupIds:[...]}`（传空回落默认词组） |
 | POST | `/api/words/batch-groups` | 批量调组 `{wordIds, groupIds, mode: replace/add/remove}` |
 | POST | `/api/words/batch-ai` | **批量AI解析添加** `{words:[...], groupId?}`，返回 added / existing / duplicated / failed |
-| GET | `/api/words/export` | 导出 JSON 备份 version 2（含词组树 + 单词词组关系） |
+| POST | `/api/words/batch-delete` | 批量删除 `{wordIds, mode}`，`mode=group` 时只移出词组、保留单词 |
+| POST | `/api/words/batch-synonym` | 批量打 / 清同义标签 `{wordIds, synonym}` |
+| GET | `/api/words/synonyms` | 已用过的同义标签列表 |
+| GET | `/api/words/export` | 导出 JSON 备份 version 2（含词组树 + 单词词组关系 + 复习统计） |
 | GET | `/api/words/export-excel` | 按词组分 Sheet 导出 Excel（含「未分组」Sheet） |
+| GET | `/api/words/export-template` | 下载 Excel 导入模板（只有标题行的空表） |
+
+> 分页接口还支持 `?hasSynonym=true`（只看已归组的词）和 `?synonym=lawyer`（精确筛某个标签）。
+
+### 词组与易错词
+
+| 方法 | 路径 | 功能 |
+|:---|:---|:---|
+| GET | `/api/groups/tree` | 词组树（含每个词组的直接单词数 `wordCount`） |
+| GET | `/api/groups/default-id` | 内置默认词组 ID |
+| POST | `/api/groups` | 新增词组 `{code?, name, parentId?, sortOrder?}`（code 留空自动生成 Gxxx） |
+| PUT | `/api/groups/{id}` | 更新词组 `{code, name, parentId, sortOrder}`（防成环校验） |
+| DELETE | `/api/groups/{id}` | 删除词组（默认词组 / 易错词组 / 有子词组不可删） |
+| GET | `/api/difficult/config` | 读取易错词阈值（窗口次数 / 连续错误 / 窗口内累计错误） |
+| PUT | `/api/difficult/config` | 保存易错词阈值（两个阈值必须 ≤ 窗口次数，否则 400） |
+| GET | `/api/difficult/words/{wordId}` | 某单词的易错词状态 |
+| POST | `/api/difficult/words/{wordId}/add` | 手动把单词加入内置易错词组 |
 
 ### 复习与统计
 
@@ -299,16 +354,8 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | GET | `/api/audio/{word}/status` | 查询生成状态 `ready` / `generating` |
 | POST | `/api/audio/batch` | 触发批量生成（运行中不重复启动） |
 | GET | `/api/audio/batch/status` | 查询批量状态 `running` / `idle` |
-
-### 词组
-
-| 方法 | 路径 | 功能 |
-|:---|:---|:---|
-| GET | `/api/groups/tree` | 词组树（含每个词组的直接单词数 `wordCount`） |
-| GET | `/api/groups/default-id` | 内置默认词组 ID |
-| POST | `/api/groups` | 新增词组 `{code?, name, parentId?, sortOrder?}`（code 留空自动生成 Gxxx） |
-| PUT | `/api/groups/{id}` | 更新词组 `{code, name, parentId, sortOrder}`（防成环校验） |
-| DELETE | `/api/groups/{id}` | 删除词组（默认词组 / 有子词组不可删） |
+| POST | `/api/audio/regenerate` | 重新生成指定单词的音频 |
+| POST | `/api/audio/cleanup` | 清理无用音频（`?dryRun=true` 只统计不删） |
 
 ### AI 配置
 
@@ -318,6 +365,20 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | PUT | `/api/ai/config` | 保存 AI 配置 |
 
 > AI 配置存在独立的 `ai_config` 表：**JSON 备份导出不含它**（避免泄漏 API Key），**导入也不覆盖它**。
+
+### 网络代理
+
+| 方法 | 路径 | 功能 |
+|:---|:---|:---|
+| GET | `/api/proxy/config` | 读取代理配置（`enabled` / `host` / `port` / `configured`） |
+| PUT | `/api/proxy/config` | 保存代理配置（启用时校验地址与端口），**保存即生效、无需重启** |
+| POST | `/api/proxy/test` | 测试代理连通性，返回 `success` / `latencyMs` |
+| POST | `/api/proxy/test-direct` | 测试直连（绕开代理与系统代理属性） |
+
+> 代理只作用于后端出站的 Edge TTS 合成请求。同样存独立的 `proxy_config` 表，
+> **不进 JSON 备份**（避免泄漏代理地址）。
+> 只支持**免认证的 HTTP 代理** —— JDK 的 `HttpClient` 在 CONNECT 隧道上不会补发
+> `Proxy-Authorization`，带账号密码的代理必返 407。
 
 ---
 
@@ -359,9 +420,14 @@ copy target\WordReviewPro.jar ..\dist-staging\
 | **按词组筛选** | 分页查询包含该词组**所有子孙**词组的单词 |
 | **删除单词二选一** | 「从本词组移除」只解除归属、单词保留；「彻底删除」清关联 + 统计（二次确认） |
 | **词组删除限制** | 默认词组不可删；有子词组需先删子词组；上级不能是自身子孙 |
-| **Excel 导入需选词组** | 未选词组时上传框禁用；已存在单词只新增关联，不重复创建 |
+| **Excel 导入需选词组** | 未选词组时弹红字提示（不用 `:disabled` 挡，挡了用户不知道为什么传不上去）；已存在单词只新增关联，不重复创建 |
 | **Excel 按 Sheet 导出** | 每词组一个 Sheet，未归类进「未分组」，空词组不生成 Sheet |
-| **JSON 备份 v2** | 含词组树（parentCode、sortOrder）与 `groups` 数组；旧版 v1 导入只补默认词组归属 |
+| **Excel 多 Sheet 导入** | 读**全部** Sheet，按 Sheet 名（`编号-名称`）还原词组；找不到同名词组的落到「导入到词组」，**不自动建组**。归属**累加**不覆盖 —— 398 个词同时属于多个词组 |
+| **JSON 备份 v2** | 含词组树（parentCode、sortOrder）、`groups` 数组、`synonym`、`difficultConfig`；旧版 v1 导入只补默认词组归属 |
+| **同义标签** | `synonym` 是分组信息、无隐私，参与备份；按它排序时空值统一排最后。想控制组间先后可加数字前缀（`1-lawyer`） |
+| **易错词组** | 系统内置根词组，编号用保留值 `DIFFICULT`（避开用户自建的 `Gxxx` 序列，防止导入备份时撞车）；不可删除但可改名、排序、挂上级 |
+| **易错词自动入组** | 拼写类阶段满足「连续错误 ≥ 阈值」或「窗口内累计错误 ≥ 阈值」即自动加入并弹提示；拼对一次连续计数清零 |
+| **易错词配置** | 存在 `difficult_config` 单例行，参与备份；两个阈值必须 ≤ 窗口次数 |
 | **四阶段复习** | ① 认读（英→中）② 拼写练习（显示全部 + 拼写框）③ 默写（中→英）④ 听音默写（仅音频 + 拼写） |
 | **五种复习模式** | 完整复习 / 仅认读 / 仅拼写练习 / 仅默写 / 仅听音默写 |
 | **仅认读标记** | `recogOnly` 的单词不进入拼写练习、默写、听音默写 |
@@ -412,11 +478,16 @@ Excel A~E 列严格映射：
   （H2 文件锁 + 8080 端口，dev 与发布包共用 `~/worddb`，并存会报 `The file is locked`）
 - 端口默认 **8080**：发布包用户改包内 `application.properties` 的 `server.port=` 即可；
   开发环境改端口需同步改 `vite.config.js` 的三处 proxy target
-- `review-backend/audio/` 下约 **4187 个 mp3 / 49MB 已入版本库**（单词发音缓存，
+- `review-backend/audio/` 下约 **4490 个 mp3 / 53MB 已入版本库**（单词发音缓存，
   按单词小写命名）；首次生成发音需要联网，之后本地播放
-- CORS 已全局开放，Vite 通过 proxy 转发 `/api`、`/audio` 请求
+- **发布包不含 H2 数据库**：词库、复习记录、AI 配置、代理配置全在用户家目录的
+  `~/worddb.mv.db`，包里只有一份清掉复习记录的 `seed-words.json` 供对方导入
+- **CORS 已全局开放，Vite 通过 proxy 转发 `/api`、`/audio` 请求**
+  ⚠️ 本系统**无鉴权**（H2 Console 账号 `sa` 密码为空），仅适合本机自用，
+  **不要把它部署到公网**
 - H2 Console: http://localhost:8080/h2-console （`jdbc:h2:~/worddb` / `sa` / 空密码）
 - 详细需求文档见 [本地智能单词复习系统.md](本地智能单词复习系统.md)
+- 第三方来源与致谢见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ---
 
