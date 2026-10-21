@@ -76,6 +76,7 @@ vocabulary-review/
 ├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
 ├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip|--platform)，产物在 release/
 ├── packaging/                         # 发布包内的启动脚本与说明文档（start.sh/start.bat/README.txt/README.md/application.properties）
+├── tools/make-seed.py                 # 构建期工具：把 JSON 备份洗成不含复习记录的种子词库（不进包）
 └── 本地智能单词复习系统.md             # 需求文档
 ```
 
@@ -116,6 +117,14 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **该 profile 不激活就完全不生效**：`./dev.sh start` 依旧是后端 8080 + 前端 5173 两服务，行为不变
 - `SpaFallbackConfig`（`config/` 包）：非 `/api`、非 `/h2-console`、无扩展名的 GET 请求回退到 `index.html`，支撑 history 路由刷新；**没有 `static/index.html` 时直接放行**，开发环境等同改动前。类名不能与 `@Bean` 方法同名，否则 `BeanDefinitionOverrideException` 启动失败
 - `release.sh` 结束时执行 `mvn clean`，避免 `target/classes/static` 残留污染后续 `spring-boot:run`
+- **包里带一份种子词库 `seed-words.json`**（`--no-seed` 可关掉）：
+  H2 数据库在运行期落在用户家目录的 `~/worddb.mv.db`，**不进包**，
+  所以对方首次启动词库是空的，得自己导入一次。种子文件由 `tools/make-seed.py` 生成：
+  清空所有复习字段（reviewTotal/recogCorrect/spellWrong/lastReviewDate/spellRecentHistory 等），
+  保留词库内容、词组树和单词的词组归属（含 398 个跨组词的多个 groups）。
+  **不自动导入** —— 由对方在「数据管理」→「导入备份数据」里手动选这个文件。
+  数据源优先取本机运行中的实例（`/api/words/export`，端口 8080/8081/8082 依次试），
+  取不到就退回仓库 `data/*.json`
 - jlink 模块列表见 `release.sh`
 - **交叉打 Windows 包（`--platform windows-x86_64`，可以在 Mac 上执行）**：
   jar 与前端是平台无关的，**只有 `jre/` 需要换**。脚本会从 Adoptium 下载同主版本的
@@ -239,9 +248,24 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
   里弹 `ElMessage.error` 红字。四个按钮（导出全部数据/导入备份数据/导入Excel/导出Excel）
   都有 loading，且互相 `:disabled` 交叉禁用，避免同时跑导入又导出
 - **Excel 按 Sheet 导出**: 每个词组一个 Sheet（A-E 列同导入格式），未归类单词导出到「未分组」Sheet，空词组不生成 Sheet
+- **Excel 导入要读全部 Sheet**（`ExcelImportService`）: 早期版本只取 `getSheetAt(0)`，
+  而导出是「一个词组一个 Sheet」、Sheet 顺序里第一个恰好是默认词组，
+  导致其余词组的几千个单词被**静默丢弃**却还报「导入成功」。现在遍历 `getNumberOfSheets()`：
+  - **Sheet 名 → 词组**：导出格式是 `编号-名称`（如 `G002P1-Chapter1 Geographic`），
+    取**第一个 `-`** 前的部分当编号去 `findByCode`；查不到再按**名称**精确匹配（仅当恰好一个同名词组才算）；
+    再不行就落到用户选的「导入到词组」，**不自动创建词组**（用户明确要求）。
+    非法字符剔除 / 重名加 `(2)` / 31 字符截断都只影响名称段，编号在前面不受影响
+  - **归属必须累加不能覆盖**：实测有 **398 个词属于多个词组**（`coach` ∈ G001+G002P14），
+    这些词在导出文件里同时出现在多个 Sheet，所以用 `Map<Long, Set<Long>>` 收集、
+    写入前按 `(wordId, groupId)` 去重（`word_group_member` 上有唯一约束）
+  - 返回值 `ImportResult`：单词总数（跨 Sheet 去重）+ `groupsUsed`（用到的词组名）+ `unmatchedSheets`（没匹配上的 Sheet 名），
+    提示语要告诉用户哪些 Sheet 的词回落到了「导入到词组」
 - **Excel 导入模板**: `/api/words/export-template` 出一个只有标题行的空表，数据管理页导入区下方有「下载导入模板」链接。
   标题行与导出共用 `ExcelExportService.HEADERS`，列顺序永远一致；导入按列下标读且跳过第 1 行，所以空模板原样导入返回 0 个词不报错
 - **JSON 备份 v2**: 导出含词组树（parentCode 引用、sortOrder）和每个单词的 groups(code 数组)；老版本 v1（无词组关系）导入时仅补充默认词组归属，不破坏现有词组
+- **JSON 备份含易错词阈值**: `difficultConfig`（windowSize/consecutiveWrongLimit/recentWrongLimit）
+  既导出也导入（导入走 `DifficultConfigService.save()`，它自带「两个阈值 ≤ 窗口次数」的校验；
+  备份里的值不合法时只跳过这一项，不中断整个导入）。老备份没有这个字段 → 保持本地配置不动
 - **最近 N 次拼写错误次数 (recentSpellWrong)**: 拼写练习 / 默写 / 听音默写 三个阶段的**每一次提交**都算一次拼写。
   Word 上存 `spell_recent_history`（'1'=拼错，'0'=拼对，末尾最新，长度恒 ≤ 窗口次数）+ 冗余列 `recent_spell_wrong`。
   冗余一列是因为要在 SQL 里按它排序，JPA 统计不了字符串里 '1' 的个数。窗口次数可在「易错词配置」改，
@@ -258,6 +282,18 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 - **内置易错词组**: 系统启动时自动创建一个根词组「易错词组」（`WordGroup.isDifficult=true`），
   和默认词组一样**不可删除**（词组管理里删除按钮置灰，后端也拦），但可以改名、排序、挂上级、删单词归属。
   词组标签在词库管理里是橙色（warning），默认词组仍是红色
+- **内置易错词组用保留编号 `DIFFICULT`**（`WordGroupService.DIFFICULT_GROUP_CODE`）:
+  不能用 `generateCode()` 的 `G%03d` 序列 —— 它取的是「词组数+1」，全新库里只有默认词组时正好是 `G002`，
+  而用户备份里 `G002` 常常是别的词组（如「雅思词汇真经」）。导入备份按编号匹配时会撞上，
+  把雅思词组的名字覆盖到内置易错词组上、`isDifficult` 标记也错位，
+  结果对方的「易错词库」页面（`/difficult-words`）指向错误的词组。
+  保留编号和用户自建组的编号空间错开，撞车就不会发生
+- **导入备份按「角色」认领内置词组**（`DataExportImportService.importData`）:
+  备份里 `isDefault=true` 的组 → 本地内置默认词组，`isDifficult=true` 的组 → 本地内置易错词组，
+  这两个组的内置标记**以本地为准、不从备份覆盖**（只更新 name/sortOrder/parentCode）；
+  其余组仍按 code 匹配/新建。安全网：万一某个普通组的 code 撞上了本地内置组，
+  给它另换一个空闲 code（`generateFreeCode()`），不要覆盖内置组。
+  注意 `codeToId` 的键始终是**备份里的原编号** —— 单词的 `groups` 和父子关系都按它引用
 - **自动加入易错词组**: 拼写类阶段（PRACTICE/SPELL）上报结果后判断，满足任一即自动加入并弹提示：
   1. 连续拼写错误 ≥ consecutiveWrongLimit（默认 3，拼对一次清零）
   2. 最近 windowSize 次拼写累计错误 ≥ recentWrongLimit（默认 5，不要求连续）

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.wordreview.entity.ReviewConfig;
+import com.wordreview.entity.DifficultConfig;
 import com.wordreview.entity.Word;
 import com.wordreview.entity.WordGroup;
 import com.wordreview.entity.WordGroupMember;
@@ -33,6 +34,7 @@ public class DataExportImportService {
     private final WordGroupRepository groupRepository;
     private final WordGroupMemberRepository memberRepository;
     private final WordGroupService wordGroupService;
+    private final DifficultConfigService difficultConfigService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -58,6 +60,14 @@ public class DataExportImportService {
             configMap.put("emergencyWeight", config.getEmergencyWeight());
             exportData.put("reviewConfig", configMap);
         });
+
+        // 导出易错词阈值（纯数字、无隐私，换机器后应该保留用户调好的值）
+        DifficultConfig difficultConfig = difficultConfigService.get();
+        Map<String, Object> difficultMap = new LinkedHashMap<>();
+        difficultMap.put("windowSize", difficultConfig.getWindowSize());
+        difficultMap.put("consecutiveWrongLimit", difficultConfig.getConsecutiveWrongLimit());
+        difficultMap.put("recentWrongLimit", difficultConfig.getRecentWrongLimit());
+        exportData.put("difficultConfig", difficultMap);
 
         // 导出词组树（父在前子在后，parentCode 引用父编号）
         List<WordGroup> groups = groupRepository.findAll();
@@ -177,6 +187,11 @@ public class DataExportImportService {
         List<Map<String, Object>> groupList = (List<Map<String, Object>>) importData.get("groups");
         if (groupList != null && !groupList.isEmpty()) {
             hasGroupRelations = true;
+            // 先把本地两个内置词组找出来，备份里的「角色组」要按角色认领它们，
+            // 而不是按编号硬匹配 —— 见下面 claimBuiltInGroups 的说明
+            WordGroup localDefault = wordGroupService.ensureDefaultGroup();
+            WordGroup localDifficult = wordGroupService.ensureDifficultGroup();
+
             // 第一遍：创建/更新所有词组（不含父级关系）
             Set<String> seenCodes = new HashSet<>();
             for (Map<String, Object> groupMap : groupList) {
@@ -184,15 +199,40 @@ public class DataExportImportService {
                 String name = groupMap.get("name") == null ? null : groupMap.get("name").toString().trim();
                 if (code == null || code.isEmpty() || !seenCodes.add(code)) continue;
 
-                WordGroup group = groupRepository.findByCode(code).orElseGet(WordGroup::new);
-                group.setCode(code);
+                boolean isDefaultRole = Boolean.TRUE.equals(groupMap.get("isDefault"));
+                boolean isDifficultRole = Boolean.TRUE.equals(groupMap.get("isDifficult"));
+
+                WordGroup group;
+                if (isDefaultRole) {
+                    // 备份里的默认词组 → 本地的内置默认词组。
+                    // 标记以本地为准，不从备份覆盖（本地这个组本来就是 isDefault=true）。
+                    group = localDefault;
+                } else if (isDifficultRole) {
+                    // 备份里的易错词组 → 本地的内置易错词组。
+                    // 同上，isDifficult 标记以本地为准。
+                    group = localDifficult;
+                } else {
+                    // 普通词组：按编号找现有的，找不到就新建
+                    Optional<WordGroup> existing = groupRepository.findByCode(code);
+                    if (existing.isPresent()) {
+                        group = existing.get();
+                        // 安全网：这个编号撞上了本地的内置词组（用户手工编过号才会发生），
+                        // 不能直接覆盖内置组，改用新编号另建一个。
+                        // 注意 codeToId 仍按**备份里的原编号**做键 —— 单词的 groups 字段
+                        // 和父子关系都是按备份编号引用的，改了键就对不上了。
+                        if (isBuiltIn(group)) {
+                            String newCode = wordGroupService.generateFreeCode();
+                            log.warn("备份里的词组编号 {} 与内置词组冲突，改用新编号 {}", code, newCode);
+                            group = new WordGroup();
+                            group.setCode(newCode);
+                        }
+                    } else {
+                        group = new WordGroup();
+                        group.setCode(code);
+                    }
+                }
+
                 group.setName(name);
-                if (Boolean.TRUE.equals(groupMap.get("isDefault"))) {
-                    group.setIsDefault(true);
-                }
-                if (Boolean.TRUE.equals(groupMap.get("isDifficult"))) {
-                    group.setIsDifficult(true);
-                }
                 // 排序字段（老备份无此字段时保持原值，新词组落为 0）
                 Integer sortOrder = toInteger(groupMap.get("sortOrder"));
                 if (sortOrder != null) {
@@ -200,8 +240,8 @@ public class DataExportImportService {
                 } else if (group.getId() == null) {
                     group.setSortOrder(0);
                 }
-                codeToId.put(code, group.getId());
                 WordGroup saved = groupRepository.save(group);
+                // 键 = 备份里的编号（单词归属和父子关系都按它引用）
                 codeToId.put(code, saved.getId());
             }
             // 第二遍：建立父子关系
@@ -237,6 +277,35 @@ public class DataExportImportService {
             if (configMap.get("emergencyWeight") != null) config.setEmergencyWeight(((Number) configMap.get("emergencyWeight")).doubleValue());
             configRepository.save(config);
             log.info("复习配置已导入");
+        }
+
+        // ===== 导入易错词阈值 =====
+        // 老备份没有这个字段，保持本地配置不动
+        @SuppressWarnings("unchecked")
+        Map<String, Object> difficultMap = (Map<String, Object>) importData.get("difficultConfig");
+        if (difficultMap != null) {
+            Integer windowSize = toInteger(difficultMap.get("windowSize"));
+            Integer consecutive = toInteger(difficultMap.get("consecutiveWrongLimit"));
+            Integer recent = toInteger(difficultMap.get("recentWrongLimit"));
+            if (windowSize != null && consecutive != null && recent != null) {
+                // 先自己校验再写。直接调 DifficultConfigService.save() 抛异常的话，
+                // 异常发生在 @Transactional 方法内部会把整个事务标记成 rollback-only，
+                // 外层 catch 住也救不回来 —— 后面所有单词的导入都会被一起回滚掉。
+                String invalidReason = validateDifficultThresholds(windowSize, consecutive, recent);
+                if (invalidReason != null) {
+                    // 备份里的阈值不合法（比如两个阈值大于窗口次数）时不要中断整个导入，
+                    // 只跳过这一项，其余数据照常进来
+                    log.warn("易错词阈值不合法，已跳过: {}", invalidReason);
+                } else {
+                    DifficultConfig config = new DifficultConfig();
+                    config.setWindowSize(windowSize);
+                    config.setConsecutiveWrongLimit(consecutive);
+                    config.setRecentWrongLimit(recent);
+                    difficultConfigService.save(config);
+                    log.info("易错词阈值已导入: 窗口 {} 次，连续错误 {} 次，窗口内累计错误 {} 次",
+                            windowSize, consecutive, recent);
+                }
+            }
         }
 
         // ===== 导入单词（最后统一处理词组归属） =====
@@ -337,6 +406,35 @@ public class DataExportImportService {
 
         log.info("数据导入完成，共处理 {} 个单词", wordCount);
         return wordCount;
+    }
+
+    /** 是否是本地内置词组（默认词组 / 易错词组） */
+    private boolean isBuiltIn(WordGroup group) {
+        return group != null
+                && (Boolean.TRUE.equals(group.getIsDefault()) || Boolean.TRUE.equals(group.getIsDifficult()));
+    }
+
+    /**
+     * 校验易错词阈值是否合法，合法返回 null，不合法返回原因。
+     * 规则与 {@link DifficultConfigService#save} 一致：窗口 1..100，两个阈值 ≥1 且 ≤ 窗口。
+     */
+    private String validateDifficultThresholds(int windowSize, int consecutive, int recent) {
+        if (windowSize < 1 || windowSize > DifficultConfigService.MAX_WINDOW_SIZE) {
+            return "统计窗口次数需在 1 ~ " + DifficultConfigService.MAX_WINDOW_SIZE + " 之间";
+        }
+        if (consecutive < 1) {
+            return "连续错误次数至少为 1";
+        }
+        if (recent < 1) {
+            return "窗口内累计错误次数至少为 1";
+        }
+        if (consecutive > windowSize) {
+            return "连续错误次数不能大于统计窗口次数";
+        }
+        if (recent > windowSize) {
+            return "窗口内累计错误次数不能大于统计窗口次数";
+        }
+        return null;
     }
 
     /** 安全转 Integer，null/空/非法一律返回 null */

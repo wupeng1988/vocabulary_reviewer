@@ -77,13 +77,25 @@ public class WordController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "groupId", required = false) Long groupId) {
         try {
-            int count = excelImportService.importExcel(file, groupId);
+            ExcelImportService.ImportResult imported = excelImportService.importExcel(file, groupId);
             // 导入完成后，异步生成缺失音频
             audioGenerationTaskService.startBatchGeneration();
             Map<String, Object> result = new HashMap<>();
             result.put("success", true);
-            result.put("count", count);
-            result.put("message", "成功导入 " + count + " 个单词");
+            result.put("count", imported.wordCount);
+            result.put("groupsUsed", imported.groupsUsed);
+            StringBuilder message = new StringBuilder("成功导入 " + imported.wordCount + " 个单词");
+            if (!imported.groupsUsed.isEmpty()) {
+                message.append("，分布在 ").append(imported.groupsUsed.size()).append(" 个词组：")
+                        .append(String.join("、", imported.groupsUsed));
+            }
+            // 没匹配上词组的 Sheet 要说清楚，它们的词落在了「导入到词组」里
+            if (!imported.unmatchedSheets.isEmpty()) {
+                message.append("。其中 ").append(imported.unmatchedSheets.size())
+                        .append(" 个工作表没找到同名词组，单词已导入到你选择的词组：")
+                        .append(String.join("、", imported.unmatchedSheets));
+            }
+            result.put("message", message.toString());
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             Map<String, Object> result = new HashMap<>();

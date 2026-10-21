@@ -29,6 +29,14 @@ public class WordGroupService {
     /** 内置易错词组名称：拼写连续/累计错误达标的单词自动落进来 */
     public static final String DIFFICULT_GROUP_NAME = "易错词组";
 
+    /**
+     * 内置易错词组的保留编号。
+     * 用户自建词组走 G%03d 序列，内置组用这个非 G 开头的编号，
+     * 避免和备份里用户自己的 G002、G026 之类撞车
+     * （撞车会让「雅思词汇真经」把内置易错词组的名字覆盖掉，isDifficult 标记也错位）。
+     */
+    public static final String DIFFICULT_GROUP_CODE = "DIFFICULT";
+
     /** 排序字段 null 安全比较：数值小者靠前，相同时按编号 code 升序，再按 id */
     public static final Comparator<WordGroup> GROUP_ORDER =
             Comparator.comparing(WordGroup::getSortOrder, Comparator.nullsLast(Integer::compareTo))
@@ -118,8 +126,7 @@ public class WordGroupService {
 
     /**
      * 确保内置「易错词组」存在，返回它。
-     * 与默认词组一样是根词组、不可删除；编号自动生成（Gxxx），
-     * 用户可以在词组管理里改名、排序、挂到别的上级下面，但删不掉。
+     * 与默认词组一样是根词组、不可删除；用户可以在词组管理里改名、排序、挂到别的上级下面，但删不掉。
      */
     @Transactional
     public WordGroup ensureDifficultGroup() {
@@ -139,7 +146,13 @@ public class WordGroupService {
 
         if (difficult == null) {
             difficult = new WordGroup();
-            difficult.setCode(generateCode());
+            // 用保留编号，不用 generateCode() 的 G%03d 序列。
+            // 原因：generateCode() 取的是「词组数 + 1」，全新库里只有默认词组时正好是 G002，
+            // 而用户备份里 G002 常常是别的词组（如「雅思词汇真经」）。
+            // 导入备份按编号匹配时会撞上，把雅思词组的名字覆盖到内置易错词组上、
+            // isDifficult 标记也错位，导致「易错词库」页面指向错误的词组。
+            // 保留编号和用户自建组的编号空间错开，撞车就不会发生。
+            difficult.setCode(reserveDifficultCode());
             difficult.setName(DIFFICULT_GROUP_NAME);
             difficult.setParentId(null);
             difficult.setSortOrder(0);
@@ -153,6 +166,17 @@ public class WordGroupService {
         }
         backfillDifficultFlag(difficult.getId());
         return difficult;
+    }
+
+    /**
+     * 内置易错词组的保留编号。
+     * 已被占用（极少见：用户手工把某个词组编成 DIFFICULT）时退回 G%03d 序列。
+     */
+    private String reserveDifficultCode() {
+        if (!groupRepository.existsByCode(DIFFICULT_GROUP_CODE)) {
+            return DIFFICULT_GROUP_CODE;
+        }
+        return generateCode();
     }
 
     /** 内置易错词组 */
@@ -595,5 +619,14 @@ public class WordGroupService {
             code = String.format("G%03d", n++);
         } while (groupRepository.existsByCode(code));
         return code;
+    }
+
+    /**
+     * 生成一个不与现有词组编号冲突的新编号（形如 Gxxx）。
+     * 导入备份时用得上：备份里某个词组的编号撞上了本地已有的词组，
+     * 又不能直接占用（会把别人的词组改名覆盖掉），就得另换一个。
+     */
+    public String generateFreeCode() {
+        return generateCode();
     }
 }

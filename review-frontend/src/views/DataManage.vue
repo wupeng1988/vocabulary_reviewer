@@ -49,7 +49,8 @@
         </div>
         <template #tip>
           <div style="color: #909399; font-size: 12px; margin-top: 8px">
-            仅支持 .xls / .xlsx 格式，A-E 列依次对应：生词、音标、含义、例句、例句释义
+            仅支持 .xls / .xlsx 格式，A-E 列依次对应：生词、音标、含义、例句、例句释义。
+            多 Sheet 的文件会全部读取，按 Sheet 名还原词组
             <el-link
               type="primary"
               href="/api/words/export-template"
@@ -69,7 +70,8 @@
           <el-icon style="margin-right: 4px"><download /></el-icon>导出为 Excel
         </el-button>
         <span style="color: #909399; font-size: 12px; margin-left: 8px">
-          按词组分 Sheet 导出（每个词组一个 Sheet，A-E 列依次对应：生词、音标、含义、例句、例句释义）；未归属词组的单词导出到「未分组」Sheet
+          按词组分 Sheet 导出（每个词组一个 Sheet，A-E 列依次对应：生词、音标、含义、例句、例句释义）；未归属词组的单词导出到「未分组」Sheet。
+          导回时会按 Sheet 名（编号-名称）自动还原词组，找不到同名词组的 Sheet 会落到你选的目标词组
         </span>
       </div>
     </el-card>

@@ -7,6 +7,7 @@
 #    ./release.sh --no-jre     # 只打包 jar + 启动脚本（体积小，要求对方已装 Java）
 #    ./release.sh --no-zip     # 只生成目录，不压缩
 #    ./release.sh --no-audio   # 不内置发音缓存（包小 ~50MB，但对方首次运行要联网生成）
+#    ./release.sh --no-seed    # 不内置种子词库（对方得自己导 Excel/JSON 才有词库）
 #    ./release.sh --platform windows-x86_64
 #                              # 交叉打 Windows 包（可在 macOS/Linux 上执行）。
 #                              # 自动下载一份 Windows 版 JDK 到 release/.jdk-cache/，
@@ -36,6 +37,7 @@ Word Review Pro 一键发布脚本
   ./release.sh --no-jre           只打包 jar + 启动脚本（体积小，对方需自装 Java 11+）
   ./release.sh --no-zip           只生成目录，不压缩
   ./release.sh --no-audio         不内置发音缓存（包小约 50MB）
+  ./release.sh --no-seed          不内置种子词库（对方得自己导 Excel/JSON 才有词库）
   ./release.sh --platform windows-x86_64
                                   交叉打 Windows 包，可在 macOS / Linux 上执行
 
@@ -56,12 +58,14 @@ USAGE
 
 WITH_JRE=1
 WITH_AUDIO=1
+WITH_SEED=1
 MAKE_ZIP=1
 PLATFORM_OPT="auto"     # auto = 跟随本机；也可显式指定 windows-x86_64 等
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-jre) WITH_JRE=0; shift ;;
         --no-audio) WITH_AUDIO=0; shift ;;
+        --no-seed) WITH_SEED=0; shift ;;
         --no-zip) MAKE_ZIP=0; shift ;;
         --platform)
             # shift 2 在只剩一个参数时会被 set -e 干掉，先判断再移
@@ -227,6 +231,55 @@ PYAUDIO
     fi
 else
     echo "   （跳过发音缓存，--no-audio）"
+fi
+
+# 词库种子一并打包。数据库本身不在包里（运行期在用户家目录的 ~/worddb.mv.db），
+# 所以对方首次启动词库是空的，得自己导入一次。
+# 这里放一份清掉复习记录的种子文件，让对方在「数据管理」里导入即可拿到完整词库。
+#
+# 数据源优先取本机正在运行的实例（最新的词库），取不到就退回仓库里的备份文件。
+if [ "$WITH_SEED" = "1" ]; then
+    SEED_SRC=""
+    # 从运行中的实例导出（含复习记录，make-seed.py 会清掉）
+    for PORT_TRY in 8080 8081 8082; do
+        if curl -s --max-time 5 -o "$RELEASE_DIR/.seed-raw.json" \
+                "http://localhost:${PORT_TRY}/api/words/export" 2>/dev/null; then
+            # 校验拿到的是不是真的 JSON 备份（不能只看开头几个字节）
+            if python3 -c "
+import json, sys
+try:
+    d = json.load(open('$RELEASE_DIR/.seed-raw.json', encoding='utf-8'))
+    sys.exit(0 if isinstance(d, dict) and 'words' in d else 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; then
+                SEED_SRC="$RELEASE_DIR/.seed-raw.json"
+                echo "   ↪ 词库数据源: 运行中的实例 (localhost:${PORT_TRY})"
+                break
+            fi
+        fi
+    done
+    # 回退到仓库里的备份文件
+    if [ -z "$SEED_SRC" ]; then
+        for F in "$ROOT_DIR"/data/*.json; do
+            if [ -f "$F" ]; then
+                SEED_SRC="$F"
+                echo "   ↪ 词库数据源: 仓库备份 ($(basename "$F"))"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$SEED_SRC" ]; then
+        echo "⚠️  找不到词库数据源（运行中的实例和 data/*.json 都没有），本包不含种子词库"
+    else
+        python3 "$ROOT_DIR/tools/make-seed.py" "$SEED_SRC" "$STAGE_DIR/seed-words.json"
+        SEED_SIZE="$(du -h "$STAGE_DIR/seed-words.json" | cut -f1)"
+        echo "   ✅ 种子文件: seed-words.json (${SEED_SIZE}，含词组结构，不含复习记录)"
+    fi
+    rm -f "$RELEASE_DIR/.seed-raw.json"
+else
+    echo "   （跳过种子词库，--no-seed）"
 fi
 
 # macOS 双击入口（Windows 包里放 .command 没有意义，别混进去）
