@@ -73,7 +73,7 @@ vocabulary-review/
 │           ├── DifficultSettings.vue  # 易错词配置（统计窗口次数/连续错误次数/窗口内累计错误次数）
 │           ├── ProxySettings.vue      # 网络代理设置（启用开关/地址端口，测试代理与测试直连）
 │           └── StatsDashboard.vue    # 统计看板（卡片+ECharts图表）
-├── dev.sh                             # 一键启停脚本 (start|stop|restart|status)
+├── dev.sh                             # 一键启停脚本 (start|stop|restart|status，可指定端口)
 ├── release.sh                         # 打包分发脚本 (|--no-jre|--no-zip|--platform)，产物在 release/
 ├── packaging/                         # 发布包内的启动脚本与说明文档（start.sh/start.bat/README.txt/README.md/application.properties）
 ├── tools/make-seed.py                 # 构建期工具：把 JSON 备份洗成不含复习记录的种子词库（不进包）
@@ -95,6 +95,19 @@ cd review-frontend && npm run dev          # 前端 (端口 5173, 代理到后�
 ./dev.sh status    # 查看运行状态
 ```
 访问 http://localhost:5173
+
+**dev.sh 支持指定端口**：`./dev.sh {start|stop|restart|status} [后端端口] [前端端口]`
+- `./dev.sh start 9090 5190` → 后端 9090、前端 5190
+- 第一个参数是后端端口，第二个是前端端口；**只给后端端口时前端沿用上次的**（不是回落到默认值）
+- 端口记在 `.pids/ports`（`.pids/` 已在 .gitignore），`stop`/`status` 不带参数时自动沿用
+- 后端端口靠 `mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=N` 传进去
+  （实测 `spring-boot.run.arguments` 比 `SERVER_PORT` 环境变量更明确，两者都验证过 Tomcat 真的换端口了）
+- 前端端口 + **代理目标**靠环境变量传给 vite：`vite.config.js` 读 `FRONTEND_PORT`（默认 5173）
+  和 `BACKEND_PORT`（默认 8080），后者决定 `/api`、`/audio`、`/h2-console` 代理到哪
+- 前端加了 `strictPort` —— **仅当显式给了端口时**才生效（占用就报错退出，不静默顺延）。
+  静默顺延会让「我明明指定了 5190」变成 5191，而访问地址还写着 5190，最容易踩坑；
+  但直接 `npm run dev`（没给端口）时保持 vite 原行为（占用自动顺延），别把日常开发也卡死
+- 前后端端口相同时，前端自动往后顺延一个（顺延结果会打印出来）
 
 ## 发布打包（分发给无开发环境的用户）
 ```bash

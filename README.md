@@ -168,6 +168,23 @@ chmod +x dev.sh
 
 > 其他命令：`stop`（停止）、`status`（查看状态）
 
+**指定端口（dev.sh）：**
+
+`dev.sh` 支持在命令后带端口参数，第一个是后端端口、第二个是前端端口：
+
+```bash
+./dev.sh start                    # 后端 8080，前端 5173（默认）
+./dev.sh start 9090               # 后端 9090，前端沿用上次的端口
+./dev.sh start 9090 5190          # 后端 9090，前端 5190
+./dev.sh restart 9090 5190        # 用指定端口重启
+./dev.sh stop                     # 停止（按上次用的端口）
+./dev.sh status                   # 查看状态（按上次用的端口）
+```
+
+- 端口记在 `.pids/ports` 里，`stop` / `status` 不带参数时自动沿用，无需重复敲端口
+- 前端的 `/api`、`/audio`、`/h2-console` 代理会自动指向本次指定的后端端口，不用改 `vite.config.js`
+- 端口被占用时会直接提示，不会静默顺延到别的端口
+
 ### 方式二：手动启动
 
 ```bash
