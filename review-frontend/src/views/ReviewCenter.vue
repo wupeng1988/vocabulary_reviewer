@@ -215,6 +215,7 @@
                 </el-button>
               </div>
               <div style="font-size: 24px; margin-bottom: 10px">{{ currentWord.meaning }}</div>
+              <div v-if="exampleCloze" style="font-size: 18px; color: #606266; margin-bottom: 10px">{{ exampleCloze }}</div>
               <div style="font-size: 18px; color: #909399">{{ currentWord.exampleMeaning }}</div>
             </div>
 
@@ -293,6 +294,7 @@
               <el-button size="large" @click="playWordAudio(currentWord.word)" style="font-size: 24px; padding: 16px 32px">
                 🔊 播放发音
               </el-button>
+              <div v-if="exampleCloze" style="font-size: 18px; color: #606266; margin-top: 12px">{{ exampleCloze }}</div>
               <div style="font-size: 16px; color: #909399; margin-top: 12px">请根据发音拼写单词</div>
             </div>
 
@@ -594,6 +596,173 @@ const normalizeWord = (str) => {
     .toLowerCase()
     .replace(/[‐‑‒–—―﹘﹣－]/g, '-')
 }
+
+// ==================== 填空例句 ====================
+
+/**
+ * 常见不规则变形表：例句里出现这些变形同样能识别并挖空。
+ * 没收录的不规则变形（如 child→children 之外的生僻词）识别不到，
+ * 对应例句整句不显示 —— 不能原样展示，否则等于把答案写在题面上
+ */
+const IRREGULAR_WORD_FORMS = {
+  be: ['am', 'is', 'are', 'was', 'were', 'been', 'being'],
+  have: ['has', 'had', 'having'],
+  do: ['does', 'did', 'done', 'doing'],
+  go: ['goes', 'went', 'gone', 'going'],
+  make: ['made', 'makes', 'making'],
+  say: ['said', 'says'],
+  take: ['took', 'taken', 'takes', 'taking'],
+  see: ['saw', 'seen', 'sees', 'seeing'],
+  come: ['came', 'comes', 'coming'],
+  think: ['thought', 'thinks', 'thinking'],
+  get: ['got', 'gotten', 'gets', 'getting'],
+  give: ['gave', 'given', 'gives', 'giving'],
+  find: ['found', 'finds', 'finding'],
+  know: ['knew', 'known', 'knows', 'knowing'],
+  feel: ['felt', 'feels', 'feeling'],
+  leave: ['left', 'leaves', 'leaving'],
+  keep: ['kept', 'keeps', 'keeping'],
+  run: ['ran', 'runs', 'running'],
+  write: ['wrote', 'written', 'writes', 'writing'],
+  speak: ['spoke', 'spoken', 'speaks', 'speaking'],
+  teach: ['taught', 'teaches', 'teaching'],
+  buy: ['bought', 'buys', 'buying'],
+  bring: ['brought', 'brings', 'bringing'],
+  catch: ['caught', 'catches', 'catching'],
+  hold: ['held', 'holds', 'holding'],
+  stand: ['stood', 'stands', 'standing'],
+  understand: ['understood', 'understands', 'understanding'],
+  tell: ['told', 'tells', 'telling'],
+  become: ['became', 'becomes', 'becoming'],
+  begin: ['began', 'begun', 'begins', 'beginning'],
+  grow: ['grew', 'grown', 'grows', 'growing'],
+  fly: ['flew', 'flown', 'flies', 'flying'],
+  eat: ['ate', 'eaten', 'eats', 'eating'],
+  fall: ['fell', 'fallen', 'falls', 'falling'],
+  send: ['sent', 'sends', 'sending'],
+  build: ['built', 'builds', 'building'],
+  lose: ['lost', 'loses', 'losing'],
+  meet: ['met', 'meets', 'meeting'],
+  pay: ['paid', 'pays', 'paying'],
+  sell: ['sold', 'sells', 'selling'],
+  sit: ['sat', 'sits', 'sitting'],
+  sleep: ['slept', 'sleeps', 'sleeping'],
+  spend: ['spent', 'spends', 'spending'],
+  win: ['won', 'wins', 'winning'],
+  hear: ['heard', 'hears', 'hearing'],
+  put: ['puts', 'putting'],
+  cut: ['cuts', 'cutting'],
+  set: ['sets', 'setting'],
+  let: ['lets', 'letting'],
+  cost: ['costs', 'costing'],
+  choose: ['chose', 'chosen', 'chooses', 'choosing'],
+  break: ['broke', 'broken', 'breaks', 'breaking'],
+  drive: ['drove', 'driven', 'drives', 'driving'],
+  wear: ['wore', 'worn', 'wears', 'wearing'],
+  lead: ['led', 'leads', 'leading'],
+  rise: ['rose', 'risen', 'rises', 'rising'],
+  man: ['men'],
+  woman: ['women'],
+  person: ['people'],
+  child: ['children'],
+  foot: ['feet'],
+  tooth: ['teeth'],
+  mouse: ['mice'],
+  good: ['better', 'best'],
+  bad: ['worse', 'worst'],
+}
+
+/**
+ * 生成目标单词的常见规则变形（复数/三单/过去式/-ing/比较级/副词），
+ * 并上不规则变形表，构成例句挖空的可识别词形集合。
+ * 候选里会有少量不存在的形式（如 minibus+ed），多收集不影响正确性
+ */
+const buildWordForms = (word) => {
+  const forms = new Set([word])
+  const irregular = IRREGULAR_WORD_FORMS[word]
+  if (irregular) irregular.forEach(f => forms.add(f))
+
+  const y2i = /[bcdfgklmnprstvz]y$/.test(word)             // 辅音+y: study→studies/studied
+  const eEnd = /e$/.test(word)                             // 不发音 e: hire→hired/taking
+  const doubleEnd = /[aeiou][bcdfgklmnprstvz]$/.test(word) // 闭音节双写: run→running
+  const last = word.slice(-1)
+
+  // 复数 / 三单
+  if (/(s|x|z|ch|sh)$/.test(word)) forms.add(word + 'es')
+  else if (y2i) forms.add(word.slice(0, -1) + 'ies')
+  else forms.add(word + 's')
+
+  // 过去式 / 过去分词
+  if (eEnd) {
+    forms.add(word + 'd')
+    forms.add(word.slice(0, -1) + 'en')
+  } else if (y2i) {
+    forms.add(word.slice(0, -1) + 'ied')
+  } else {
+    forms.add(word + 'ed')
+    if (doubleEnd) forms.add(word + last + 'ed')
+  }
+
+  // -ing（去 e 或双写末尾辅音）
+  if (eEnd) forms.add(word.slice(0, -1) + 'ing')
+  else {
+    forms.add(word + 'ing')
+    if (doubleEnd) forms.add(word + last + 'ing')
+  }
+
+  // 比较级 / 最高级
+  if (eEnd) {
+    forms.add(word + 'r')
+    forms.add(word + 'st')
+  } else if (y2i) {
+    forms.add(word.slice(0, -1) + 'ier')
+    forms.add(word.slice(0, -1) + 'iest')
+  } else {
+    forms.add(word + 'er')
+    forms.add(word + 'est')
+    if (doubleEnd) {
+      forms.add(word + last + 'er')
+      forms.add(word + last + 'est')
+    }
+  }
+
+  // 副词
+  if (y2i) forms.add(word.slice(0, -1) + 'ily')
+  else if (/le$/.test(word)) forms.add(word.slice(0, -1) + 'y')
+  else if (!/ly$/.test(word)) forms.add(word + 'ly')
+
+  return forms
+}
+
+/**
+ * 生成默写/听音默写阶段的「填空例句」：把例句里的目标单词（含常见变形）
+ * 替换成定长下划线。例句里找不到可识别词形时返回 ''，调用方据此整句不显示
+ */
+const makeClozeSentence = (sentence, word) => {
+  if (!sentence || !word) return ''
+  const forms = buildWordForms(normalizeWord(word.trim()))
+  let matched = false
+  const result = sentence
+    .split(/(\s+)/)
+    .map(chunk => {
+      if (!chunk || !chunk.trim()) return chunk
+      // 剥出词芯（含撇号/连字符），保留首尾标点
+      const m = chunk.match(/^([^a-zA-Z0-9'’\-]*)([a-zA-Z0-9'’\-]+)([^a-zA-Z0-9'’\-]*)$/)
+      if (!m) return chunk
+      // 所有格 's 不参与比对（minibus's → minibus）
+      const core = normalizeWord(m[2]).replace(/['’]s?$/, '')
+      if (!forms.has(core)) return chunk
+      matched = true
+      return m[1] + '_____' + m[3]
+    })
+    .join('')
+  return matched ? result : ''
+}
+
+// 默写/听音默写阶段的填空例句（识别不到变形时为空，模板里整句不显示）
+const exampleCloze = computed(() =>
+  makeClozeSentence(currentWord.value.exampleSentence, currentWord.value.word)
+)
 
 // 当前正在播放的音频对象，用于中断上一次播放
 let currentAudio = null
