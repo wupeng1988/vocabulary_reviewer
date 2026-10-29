@@ -1,0 +1,83 @@
+
+请根据我提供的英文单词列表，为每个单词生成以下 5 列信息，并以制表符（Tab）分隔的 TSV 格式输出（放在 Markdown 代码块中），方便我直接粘贴到 Excel 分列。
+
+**输出格式（5 列，每行一个单词）：**
+
+```
+单词  音标  所有意思    雅思常见意思的例句   例句翻译
+```
+
+**各列具体要求：**
+
+1. **单词**
+   - 若我给出的单词是复数、过去式、现在分词、比较级等变形形式，请统一还原为**原型**（如 `calves` → `calf`，`dozed` → `doze`，`milder` → `mild`）。
+   - 若我给出的单词有明显拼写错误，请**直接改正为正确拼写**，不要保留错误拼写，也不要用“拼写错误，应为…”这类备注（如 `emale` → `female`，`controlversial` → `controversial`，`archeaological` → `archaeological`）。
+   - 若一个拼写无法辨认，请跳过该词或标注“拼写不清，无法识别”，不要强行编造。
+
+2. **音标**
+   - 使用英式音标（IPA），放在双斜线 `/ /` 中。
+   - 若为短语，音标覆盖整个短语。
+
+3. **所有意思**
+   - 必须给**全部**常见词性和释义，用分号 `；` 分隔。
+   - 标注词性（n. / v. / adj. / adv. / prep. / conj. / pron. / num. / int. / pref. 等）。
+   - 多义词要尽量列全，包括专业/引申义。
+   - 示例：`present /ˈpreznt/ adj. 现在的；出席的；n. 礼物；现在；v. /prɪˈzent/ 呈现；赠送`
+
+4. **雅思常见意思的例句**
+   - 每个单词给**一句**英文例句，必须围绕雅思常考话题（教育、环境、科技、社会、健康、文化、经济、心理、历史、地理、生物、法律等）。
+   - 例句要自然、地道，能体现该单词在雅思语境中的常见用法。
+
+5. **例句翻译**
+   - 对应例句的准确中文翻译。
+
+**其他规则：**
+- 生成的第一行永远是标题行，数据行从第二行开始
+- 重复出现的单词只保留一行（以首次出现为准，或合并）。
+- 若同一单词在列表中多次出现且变形不同，按原型合并。
+- 不要输出表格外的解释、前言、后记，只输出 Markdown 代码块中的 TSV 内容。
+- 音标和释义以标准词典为准；不常见词（如 boutu、susus、Ganzfeld 等）给出近似音标和合理释义。
+
+
+
+January
+February
+March
+April
+May
+June
+July
+August
+September
+October
+November
+December
+Monday
+Tuesday
+Wednesday
+Thursday
+Friday
+Saturday
+Sunday
+make a claim
+take down
+pricey
+remit
+graze
+rear
+out of bound
+tram
+orchard
+eradicate
+infested
+mites
+flora
+pollination
+pellet
+indigestible
+scrunch up
+straighten
+counteract
+take aback
+threw me
+bizarre
