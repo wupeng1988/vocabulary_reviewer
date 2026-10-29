@@ -89,11 +89,12 @@ public class WordController {
                 message.append("，分布在 ").append(imported.groupsUsed.size()).append(" 个词组：")
                         .append(String.join("、", imported.groupsUsed));
             }
-            // 没匹配上词组的 Sheet 要说清楚，它们的词落在了「导入到词组」里
+            // 没匹配上词组的 Sheet 要说清楚，它们的词落在了「导入到词组」里。
+            // 措辞把「工作表名」和「词组名」分开写，避免读起来像目标词组叫 Sheet1
             if (!imported.unmatchedSheets.isEmpty()) {
-                message.append("。其中 ").append(imported.unmatchedSheets.size())
-                        .append(" 个工作表没找到同名词组，单词已导入到你选择的词组：")
-                        .append(String.join("、", imported.unmatchedSheets));
+                message.append("。工作表 ").append(String.join("、", imported.unmatchedSheets))
+                        .append(" 没找到同名词组，这些单词已导入到词组「")
+                        .append(imported.targetGroupName).append("」");
             }
             result.put("message", message.toString());
             return ResponseEntity.ok(result);

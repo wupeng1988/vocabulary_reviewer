@@ -40,6 +40,8 @@ public class ExcelImportService {
         public List<String> groupsUsed = new ArrayList<>();
         /** 没能匹配到词组、只能落到目标词组的 Sheet 名 */
         public List<String> unmatchedSheets = new ArrayList<>();
+        /** 目标词组名（「导入到词组」，未匹配 Sheet 的单词落在它下面） */
+        public String targetGroupName;
     }
 
     /**
@@ -64,8 +66,9 @@ public class ExcelImportService {
         }
 
         Long targetGroupId = groupId != null ? groupId : wordGroupService.getDefaultGroupId();
-
         ImportResult result = new ImportResult();
+        result.targetGroupName = groupRepository.findById(targetGroupId)
+                .map(WordGroup::getName).orElse("默认词组");
         // wordId -> 该词归属的词组（一个词可以同时属于多个词组）
         Map<Long, Set<Long>> memberships = new LinkedHashMap<>();
         // 记录每个单词被处理过，用来去重计数（同一个词可能出现在多个 Sheet 里）
